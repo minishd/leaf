@@ -9,6 +9,7 @@ pub enum Literal {
     Integer(i64),
     Boolean(bool),
     Nil,
+    Ident(Ident),
 }
 
 #[derive(Debug)]
@@ -44,7 +45,6 @@ pub enum Token {
     GreaterThan,
     GreaterThanOrEqualTo,
 
-    Ident(Ident),
     Literal(Literal),
 }
 
@@ -131,7 +131,7 @@ where
             "true" => Token::Literal(Literal::Boolean(true)),
             "false" => Token::Literal(Literal::Boolean(false)),
             "nil" => Token::Literal(Literal::Nil),
-            _ => Token::Ident(Ident(word)),
+            _ => Token::Literal(Literal::Ident(Ident(word))),
         }
     }
 

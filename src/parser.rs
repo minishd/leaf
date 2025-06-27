@@ -7,7 +7,6 @@ pub enum Expr {
     // Data and variables
     Assignment(Ident, Box<Expr>),
     Literal(Literal),
-    Variable(Ident),
     // Control flow
     Call(Ident, Vec<Expr>),
     Return(Box<Expr>),
@@ -82,7 +81,36 @@ where
 
     fn parse_expr(&mut self) -> Result<Expr> {
         Ok(match self.try_next()? {
-            // Literal
+            // Assignment
+            Token::Literal(Literal::Ident(id)) if matches!(self.try_peek(), Ok(Token::Equals)) => {
+                self.eat();
+                let rhs = self.parse_expr()?;
+                Expr::Assignment(id, Box::new(rhs))
+            }
+
+            // Block call
+            Token::Literal(Literal::Ident(id))
+                if matches!(self.try_peek(), Ok(Token::ParenOpen)) =>
+            {
+                self.eat();
+                let mut args = Vec::new();
+                while !matches!(self.try_peek()?, Token::ParenClose) {
+                    args.push(self.parse_expr()?);
+
+                    // require comma for next arg if it's not the end
+                    let tk = self.try_peek()?;
+                    if matches!(tk, Token::Comma) {
+                        self.eat();
+                    } else if !matches!(tk, Token::ParenClose) {
+                        // no comma OR closing paren.. bad...
+                        return Err(ParseError::UnexpectedToken(self.next_unwrap()));
+                    }
+                }
+                // Eat closing paren
+                self.eat();
+                Expr::Call(id, args)
+            }
+
             Token::Literal(lit) => match self.try_peek() {
                 // Binary Op: equal to (lit, expr)
                 Ok(Token::EqualTo) => {
@@ -110,6 +138,7 @@ where
                 }
                 // Binary Op: greater than (lit, expr)
                 Ok(Token::GreaterThan) => {
+                    self.eat();
                     Expr::GreaterThan(Box::new(Expr::Literal(lit)), Box::new(self.parse_expr()?))
                 }
                 // Binary Op: greater than or equal to (lit, expr)
@@ -132,6 +161,7 @@ where
                     Expr::Or(Box::new(Expr::Literal(lit)), Box::new(self.parse_expr()?))
                 }
 
+                // Literal
                 _ => Expr::Literal(lit),
             },
 
@@ -153,91 +183,6 @@ where
             // Return
             Token::Return => Expr::Return(Box::new(self.parse_expr()?)),
 
-            Token::Ident(id) => {
-                match self.try_peek() {
-                    // Assignment
-                    Ok(Token::Equals) => {
-                        self.eat();
-                        let rhs = self.parse_expr()?;
-                        Expr::Assignment(id, Box::new(rhs))
-                    }
-
-                    // Block call
-                    Ok(Token::ParenOpen) => {
-                        self.eat();
-                        let mut args = Vec::new();
-                        while !matches!(self.try_peek()?, Token::ParenClose) {
-                            args.push(self.parse_expr()?);
-
-                            // require comma for next arg if it's not the end
-                            let tk = self.try_peek()?;
-                            if matches!(tk, Token::Comma) {
-                                self.eat();
-                            } else if !matches!(tk, Token::ParenClose) {
-                                // no comma OR closing paren.. bad...
-                                return Err(ParseError::UnexpectedToken(self.next_unwrap()));
-                            }
-                        }
-                        // Eat closing paren
-                        self.eat();
-                        Expr::Call(id, args)
-                    }
-
-                    // Binary Op: equal to (var, expr)
-                    Ok(Token::EqualTo) => {
-                        self.eat();
-                        Expr::EqualTo(Box::new(Expr::Variable(id)), Box::new(self.parse_expr()?))
-                    }
-                    // Binary Op: not equal to (var, expr)
-                    Ok(Token::NotEqualTo) => {
-                        self.eat();
-                        Expr::NotEqualTo(Box::new(Expr::Variable(id)), Box::new(self.parse_expr()?))
-                    }
-
-                    // Binary Op: less than (var, expr)
-                    Ok(Token::LessThan) => {
-                        self.eat();
-                        Expr::LessThan(Box::new(Expr::Variable(id)), Box::new(self.parse_expr()?))
-                    }
-                    // Binary Op: less than or equal to (var, expr)
-                    Ok(Token::LessThanOrEqualTo) => {
-                        self.eat();
-                        Expr::LessThanOrEqualTo(
-                            Box::new(Expr::Variable(id)),
-                            Box::new(self.parse_expr()?),
-                        )
-                    }
-                    // Binary Op: greater than (var, expr)
-                    Ok(Token::GreaterThan) => {
-                        self.eat();
-                        Expr::GreaterThan(
-                            Box::new(Expr::Variable(id)),
-                            Box::new(self.parse_expr()?),
-                        )
-                    }
-                    // Binary Op: greater than or equal to (var, expr)
-                    Ok(Token::GreaterThanOrEqualTo) => {
-                        self.eat();
-                        Expr::GreaterThanOrEqualTo(
-                            Box::new(Expr::Variable(id)),
-                            Box::new(self.parse_expr()?),
-                        )
-                    }
-
-                    // Binary Op: and (var, expr)
-                    Ok(Token::And) => {
-                        self.eat();
-                        Expr::And(Box::new(Expr::Variable(id)), Box::new(self.parse_expr()?))
-                    }
-                    // Binary Op: or (var, expr)
-                    Ok(Token::Or) => {
-                        self.eat();
-                        Expr::Or(Box::new(Expr::Variable(id)), Box::new(self.parse_expr()?))
-                    }
-
-                    _ => Expr::Variable(id),
-                }
-            }
             t => return Err(ParseError::UnexpectedToken(t)),
         })
     }

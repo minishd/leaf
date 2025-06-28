@@ -1,7 +1,12 @@
-use std::iter::Peekable;
+use std::{fmt, iter::Peekable};
 
 #[derive(Debug)]
 pub struct Ident(String);
+impl fmt::Display for Ident {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
 
 #[derive(Debug)]
 pub enum Literal {
@@ -11,16 +16,27 @@ pub enum Literal {
     Nil,
     Ident(Ident),
 }
+impl fmt::Display for Literal {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Literal::String(s) => write!(f, "\"{s}\""),
+            Literal::Integer(n) => write!(f, "{n}"),
+            Literal::Boolean(b) => write!(f, "{b}"),
+            Literal::Ident(id) => write!(f, "{id}"),
+            Literal::Nil => write!(f, "nil"),
+        }
+    }
+}
 
 #[derive(Debug)]
 pub enum Token {
     Equals,
 
-    Add,
-    Multiply,
-    Divide,
-
+    Plus,
     Minus,
+    Star,
+    Slash,
+    Caret,
 
     CurlyOpen,
     CurlyClose,
@@ -46,6 +62,40 @@ pub enum Token {
     GreaterThanOrEqualTo,
 
     Literal(Literal),
+}
+#[derive(PartialEq, Eq, PartialOrd, Ord)]
+pub enum Precedence {
+    Min,
+    Equality,
+    Relational,
+    Logical,
+    AddSub,
+    MulDiv,
+    Pow,
+    Assign,
+}
+#[derive(PartialEq, Eq)]
+pub enum Associativity {
+    Left,
+    Right,
+}
+impl Token {
+    // binop precedence ^_^
+    pub fn precedence(&self) -> Option<(Precedence, Associativity)> {
+        Some(match self {
+            Token::EqualTo | Token::NotEqualTo => (Precedence::Equality, Associativity::Left),
+            Token::LessThan
+            | Token::LessThanOrEqualTo
+            | Token::GreaterThan
+            | Token::GreaterThanOrEqualTo => (Precedence::Relational, Associativity::Left),
+            Token::And | Token::Or => (Precedence::Logical, Associativity::Left),
+            Token::Plus | Token::Minus => (Precedence::AddSub, Associativity::Left),
+            Token::Star | Token::Slash => (Precedence::MulDiv, Associativity::Left),
+            Token::Caret => (Precedence::Pow, Associativity::Right),
+            Token::Equals => (Precedence::Assign, Associativity::Right),
+            _ => return None,
+        })
+    }
 }
 
 #[derive(Debug)]
@@ -195,16 +245,19 @@ where
             ')' => self.eat_to(Token::ParenClose),
 
             // + add
-            '+' => self.eat_to(Token::Add),
+            '+' => self.eat_to(Token::Plus),
 
             // - subtract
             '-' => self.eat_to(Token::Minus),
 
             // * multiply
-            '*' => self.eat_to(Token::Multiply),
+            '*' => self.eat_to(Token::Star),
 
             // / divide
-            '/' => self.eat_to(Token::Divide),
+            '/' => self.eat_to(Token::Slash),
+
+            // ^ pow
+            '^' => self.eat_to(Token::Caret),
 
             // , comma
             ',' => self.eat_to(Token::Comma),

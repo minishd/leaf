@@ -1,6 +1,6 @@
 use crate::parser::{Block, Expr};
 
-enum Value {
+pub enum Value {
     String(String),
     Integer(i64),
     Boolean(bool),

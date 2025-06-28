@@ -227,89 +227,91 @@ where
         }
     }
 
-    fn lex_comment(&mut self) -> Option<Result<Token>> {
-        while self.peek() != Some('\n') {
-            self.eat();
-        }
-        self.lex()
-    }
-
     fn lex(&mut self) -> Option<Result<Token>> {
-        match self.lex_whitespace()? {
-            // { and } start/end of code block
-            '{' => self.eat_to(Token::CurlyOpen),
-            '}' => self.eat_to(Token::CurlyClose),
+        loop {
+            break match self.lex_whitespace()? {
+                // { and } start/end of code block
+                '{' => self.eat_to(Token::CurlyOpen),
+                '}' => self.eat_to(Token::CurlyClose),
 
-            // ( and ) start/end of parens (idk)
-            '(' => self.eat_to(Token::ParenOpen),
-            ')' => self.eat_to(Token::ParenClose),
+                // ( and ) start/end of parens (idk)
+                '(' => self.eat_to(Token::ParenOpen),
+                ')' => self.eat_to(Token::ParenClose),
 
-            // + add
-            '+' => self.eat_to(Token::Plus),
+                // + add
+                '+' => self.eat_to(Token::Plus),
 
-            // - subtract
-            '-' => self.eat_to(Token::Minus),
+                // - subtract
+                '-' => self.eat_to(Token::Minus),
 
-            // * multiply
-            '*' => self.eat_to(Token::Star),
+                // * multiply
+                '*' => self.eat_to(Token::Star),
 
-            // / divide
-            '/' => self.eat_to(Token::Slash),
+                // / divide
+                '/' => self.eat_to(Token::Slash),
 
-            // ^ pow
-            '^' => self.eat_to(Token::Caret),
+                // ^ pow
+                '^' => self.eat_to(Token::Caret),
 
-            // , comma
-            ',' => self.eat_to(Token::Comma),
+                // , comma
+                ',' => self.eat_to(Token::Comma),
 
-            // = equals
-            // or == equal to
-            '=' => match self.eat_peek() {
-                Some('=') => self.eat_to(Token::EqualTo),
-                _ => Some(Ok(Token::Equals)),
-            },
+                // = equals
+                // or == equal to
+                '=' => match self.eat_peek() {
+                    Some('=') => self.eat_to(Token::EqualTo),
+                    _ => Some(Ok(Token::Equals)),
+                },
 
-            // ! not
-            // or != not equal to
-            '!' => match self.eat_peek() {
-                Some('=') => self.eat_to(Token::NotEqualTo),
-                _ => Some(Ok(Token::Not)),
-            },
+                // ! not
+                // or != not equal to
+                '!' => match self.eat_peek() {
+                    Some('=') => self.eat_to(Token::NotEqualTo),
+                    _ => Some(Ok(Token::Not)),
+                },
 
-            // && and
-            '&' if matches!(self.eat_peek(), Some('&')) => self.eat_to(Token::And),
+                // && and
+                '&' if matches!(self.eat_peek(), Some('&')) => self.eat_to(Token::And),
 
-            // || or
-            '|' if matches!(self.eat_peek(), Some('|')) => self.eat_to(Token::Or),
+                // || or
+                '|' if matches!(self.eat_peek(), Some('|')) => self.eat_to(Token::Or),
 
-            // > greater than
-            // or >= greater than/equal to
-            '>' => match self.eat_peek() {
-                Some('=') => self.eat_to(Token::GreaterThanOrEqualTo),
-                _ => Some(Ok(Token::GreaterThan)),
-            },
+                // > greater than
+                // or >= greater than/equal to
+                '>' => match self.eat_peek() {
+                    Some('=') => self.eat_to(Token::GreaterThanOrEqualTo),
+                    _ => Some(Ok(Token::GreaterThan)),
+                },
 
-            // < less than
-            // or <= less than/equal to
-            '<' => match self.eat_peek() {
-                Some('=') => self.eat_to(Token::LessThanOrEqualTo),
-                _ => Some(Ok(Token::LessThan)),
-            },
+                // < less than
+                // or <= less than/equal to
+                '<' => match self.eat_peek() {
+                    Some('=') => self.eat_to(Token::LessThanOrEqualTo),
+                    _ => Some(Ok(Token::LessThan)),
+                },
 
-            // a-zA-Z_ start of word
-            'a'..='z' | 'A'..='Z' | '_' => Some(Ok(self.lex_word())),
+                // a-zA-Z_ start of word
+                'a'..='z' | 'A'..='Z' | '_' => Some(Ok(self.lex_word())),
 
-            // 0-9 integer
-            '0'..='9' => Some(Ok(self.lex_integer())),
+                // 0-9 integer
+                '0'..='9' => Some(Ok(self.lex_integer())),
 
-            // " strings
-            '"' => Some(self.lex_string()),
+                // " strings
+                '"' => Some(self.lex_string()),
 
-            // # comments
-            '#' => self.lex_comment(),
+                // # comments
+                '#' => {
+                    // skip the rest of the line
+                    // this leaves the newline btw
+                    while !matches!(self.peek(), Some('\n') | None) {
+                        self.eat();
+                    }
+                    continue;
+                }
 
-            // unexpected character
-            c => Some(Err(LexError::UnexpectedCharacter(c))),
+                // unexpected character
+                c => Some(Err(LexError::UnexpectedCharacter(c))),
+            };
         }
     }
 }

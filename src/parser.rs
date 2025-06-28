@@ -1,9 +1,6 @@
-use std::{
-    fmt::{self, Pointer},
-    iter::Peekable,
-};
+use std::iter::Peekable;
 
-use crate::lexer::{Associativity, Ident, LexError, Literal, Precedence, Token};
+use crate::lexer::{Associativity, LexError, Literal, Precedence, Token};
 
 #[derive(Debug)]
 pub enum Expr {
@@ -35,60 +32,10 @@ pub enum Expr {
     Divide(Box<Expr>, Box<Expr>),
     Exponent(Box<Expr>, Box<Expr>),
 }
-impl fmt::Display for Expr {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Expr::Assignment(l, r) => write!(f, "({l} = {r})\n"),
-            Expr::Literal(l) => write!(f, "{l}"),
-            Expr::Call(l, r) => {
-                write!(f, "{l}(")?;
-                for e in r {
-                    write!(f, "{e}, ")?;
-                }
-                write!(f, ")")?;
-                Ok(())
-            }
-            Expr::Return(l) => {
-                write!(f, "return {l}")
-            }
-            Expr::Block(b) => {
-                write!(f, "{{\n")?;
-                for e in &b.exprs {
-                    write!(f, "\t{e}\n")?;
-                }
-                write!(f, "}}")?;
-                Ok(())
-            }
-            Expr::Negate(l) => write!(f, "(-{l})"),
-            Expr::Not(l) => write!(f, "(!{l})"),
-            Expr::EqualTo(l, r) => write!(f, "({l} == {r})"),
-            Expr::NotEqualTo(l, r) => write!(f, "({l} != {r})"),
-            Expr::And(l, r) => write!(f, "({l} && {r})"),
-            Expr::Or(l, r) => write!(f, "({l} !|| {r})"),
-            Expr::LessThan(l, r) => write!(f, "({l} < {r})"),
-            Expr::LessThanOrEqualTo(l, r) => write!(f, "({l} <= {r})"),
-            Expr::GreaterThan(l, r) => write!(f, "({l} > {r})"),
-            Expr::GreaterThanOrEqualTo(l, r) => write!(f, "({l} >= {r})"),
-            Expr::Add(l, r) => write!(f, "({l} + {r})"),
-            Expr::Subtract(l, r) => write!(f, "({l} - {r})"),
-            Expr::Multiply(l, r) => write!(f, "({l} * {r})"),
-            Expr::Divide(l, r) => write!(f, "({l} / {r})"),
-            Expr::Exponent(l, r) => write!(f, "({l} ^ {r})"),
-        }
-    }
-}
 
 #[derive(Debug, Default)]
 pub struct Block {
     exprs: Vec<Expr>,
-}
-impl fmt::Display for Block {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        for e in &self.exprs {
-            e.fmt(f)?;
-        }
-        Ok(())
-    }
 }
 
 #[derive(Debug)]

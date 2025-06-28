@@ -9,5 +9,5 @@ fn main() {
     let lexer = Lexer::new(script.chars());
     let mut parser = Parser::new(lexer.map(Result::unwrap));
     let block = parser.parse().unwrap();
-    println!("{block}");
+    println!("{block:?}");
 }

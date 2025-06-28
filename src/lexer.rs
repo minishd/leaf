@@ -4,7 +4,7 @@ use std::{fmt, iter::Peekable};
 pub struct Ident(String);
 impl fmt::Display for Ident {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.0)
+        self.0.fmt(f)
     }
 }
 
@@ -66,13 +66,13 @@ pub enum Token {
 #[derive(PartialEq, Eq, PartialOrd, Ord)]
 pub enum Precedence {
     Min,
-    Equality,
-    Relational,
-    Logical,
+    Assign,
     AddSub,
     MulDiv,
     Pow,
-    Assign,
+    Logical,
+    Relational,
+    Equality,
 }
 #[derive(PartialEq, Eq)]
 pub enum Associativity {

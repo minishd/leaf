@@ -66,13 +66,15 @@ pub enum Token {
 #[derive(PartialEq, Eq, PartialOrd, Ord)]
 pub enum Precedence {
     Min,
+    Return,
     Assign,
+    Logical,
+    Equality,
+    Relational,
     AddSub,
     MulDiv,
     Pow,
-    Logical,
-    Relational,
-    Equality,
+    NegateNot,
 }
 #[derive(PartialEq, Eq)]
 pub enum Associativity {
@@ -80,8 +82,14 @@ pub enum Associativity {
     Right,
 }
 impl Token {
-    // binop precedence ^_^
-    pub fn precedence(&self) -> Option<(Precedence, Associativity)> {
+    pub fn prefix_precedence(&self) -> Option<Precedence> {
+        Some(match self {
+            Token::Return => Precedence::Return,
+            Token::Minus | Token::Not => Precedence::NegateNot,
+            _ => return None,
+        })
+    }
+    pub fn infix_precedence(&self) -> Option<(Precedence, Associativity)> {
         Some(match self {
             Token::EqualTo | Token::NotEqualTo => (Precedence::Equality, Associativity::Left),
             Token::LessThan
@@ -234,7 +242,7 @@ where
                 '{' => self.eat_to(Token::CurlyOpen),
                 '}' => self.eat_to(Token::CurlyClose),
 
-                // ( and ) start/end of parens (idk)
+                // ( and ) start/end of groups
                 '(' => self.eat_to(Token::ParenOpen),
                 ')' => self.eat_to(Token::ParenClose),
 

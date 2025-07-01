@@ -2,16 +2,18 @@ use std::iter::Peekable;
 
 use crate::lexer::{Associativity, LexError, Literal, Precedence, Token};
 
+pub mod util;
+
 #[derive(Debug)]
 pub enum Expr {
     // Data and variables
     Assignment(Box<Expr>, Box<Expr>),
     Literal(Literal),
-    // Control flow
-    Call(Box<Expr>, Vec<Expr>),
-    Return(Box<Expr>),
     // Runtime datatypes
     Block(Block),
+    // Control flow
+    Return(Box<Expr>),
+    Call(Box<Expr>, Vec<Expr>),
     // Unary operations
     Negate(Box<Expr>),
     Not(Box<Expr>),
@@ -35,7 +37,7 @@ pub enum Expr {
 
 #[derive(Debug, Default)]
 pub struct Block {
-    exprs: Vec<Expr>,
+    pub exprs: Vec<Expr>,
 }
 
 #[derive(Debug)]
@@ -96,6 +98,17 @@ where
                 self.eat();
                 Box::new(Expr::Block(b))
             }
+            // unary ops!! (prefix)
+            t if t.prefix_precedence().is_some() => {
+                let prec = t.prefix_precedence().unwrap();
+                let rhs = self.parse_expr(prec, in_group)?;
+                Box::new(match t {
+                    Token::Minus => Expr::Negate(rhs),
+                    Token::Not => Expr::Not(rhs),
+                    Token::Return => Expr::Return(rhs),
+                    _ => unreachable!(),
+                })
+            }
             // return
             Token::Return => Box::new(Expr::Return(self.parse_expr(Precedence::Min, false)?)),
             // not
@@ -110,15 +123,28 @@ where
                 Ok(Token::ParenClose) if in_group => break,
                 // end (stream)
                 Err(_) if !in_group => break,
+                // function call
+                Ok(Token::ParenOpen) => {
+                    // eat opening paren
+                    self.eat();
+                    let mut exprs = Vec::new();
+                    while !matches!(self.try_peek()?, Token::ParenClose) {
+                        exprs.push(*self.parse_expr(Precedence::Min, false)?);
+                    }
+                    // eat closing paren
+                    self.eat();
+                    lhs = Box::new(Expr::Call(lhs, exprs));
+                    continue;
+                }
                 // operator
-                Ok(t) if t.precedence().is_some() => t,
+                Ok(t) if t.infix_precedence().is_some() => t,
                 // unexpected token (stop trying to parse)
                 Ok(_) => break,
                 // unexpected end
                 Err(err) => return Err(err),
             };
 
-            let (prec, assoc) = op.precedence().unwrap();
+            let (prec, assoc) = op.infix_precedence().unwrap();
 
             // break if this op is meant for previous recursion
             // or it's equal and we would prefer to build leftward..
@@ -138,9 +164,9 @@ where
                 Token::NotEqualTo => Expr::NotEqualTo(lhs, rhs),
                 // relational
                 Token::LessThan => Expr::LessThan(lhs, rhs),
-                Token::LessThanOrEqualTo => Expr::LessThan(lhs, rhs),
-                Token::GreaterThan => Expr::LessThan(lhs, rhs),
-                Token::GreaterThanOrEqualTo => Expr::LessThan(lhs, rhs),
+                Token::LessThanOrEqualTo => Expr::LessThanOrEqualTo(lhs, rhs),
+                Token::GreaterThan => Expr::GreaterThan(lhs, rhs),
+                Token::GreaterThanOrEqualTo => Expr::GreaterThanOrEqualTo(lhs, rhs),
                 // logical
                 Token::And => Expr::And(lhs, rhs),
                 Token::Or => Expr::Or(lhs, rhs),

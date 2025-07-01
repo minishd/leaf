@@ -1,4 +1,4 @@
-use std::iter::Peekable;
+use std::{fmt, iter::Peekable};
 
 use crate::lexer::{Associativity, LexError, Literal, Precedence, Token};
 
@@ -49,6 +49,15 @@ pub enum ParseError {
 impl From<LexError> for ParseError {
     fn from(err: LexError) -> Self {
         Self::LexError(err)
+    }
+}
+impl fmt::Display for ParseError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::UnexpectedEnd => write!(f, "unexpected end of token stream"),
+            Self::UnexpectedToken(t) => write!(f, "unexpected token: {t:?}"),
+            Self::LexError(err) => write!(f, "error while lexing: {err}"),
+        }
     }
 }
 
@@ -109,10 +118,6 @@ where
                     _ => unreachable!(),
                 })
             }
-            // return
-            Token::Return => Box::new(Expr::Return(self.parse_expr(Precedence::Min, false)?)),
-            // not
-            Token::Not => Box::new(Expr::Not(self.parse_expr(Precedence::Min, false)?)),
             // unexpected token
             t => return Err(ParseError::UnexpectedToken(t)),
         };
@@ -127,12 +132,22 @@ where
                 Ok(Token::ParenOpen) => {
                     // eat opening paren
                     self.eat();
+
                     let mut exprs = Vec::new();
                     while !matches!(self.try_peek()?, Token::ParenClose) {
                         exprs.push(*self.parse_expr(Precedence::Min, false)?);
+
+                        // Continue if there is a comma,
+                        // ignore closing parens
+                        match self.try_peek()? {
+                            Token::Comma => self.eat(),
+                            Token::ParenClose => {}
+                            _ => return Err(ParseError::UnexpectedToken(self.next_unwrap())),
+                        }
                     }
                     // eat closing paren
                     self.eat();
+
                     lhs = Box::new(Expr::Call(lhs, exprs));
                     continue;
                 }

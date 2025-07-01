@@ -63,7 +63,7 @@ pub enum Token {
 
     Literal(Literal),
 }
-#[derive(PartialEq, Eq, PartialOrd, Ord)]
+#[derive(PartialEq, Eq, PartialOrd, Ord, Clone, Copy)]
 pub enum Precedence {
     Min,
     Return,
@@ -112,12 +112,13 @@ pub enum LexError {
     UnexpectedCharacter(char),
     UnexpectedEnd,
 }
-trait Check {
-    fn check(self) -> Result<char>;
-}
-impl Check for Option<char> {
-    fn check(self) -> Result<char> {
-        self.ok_or(LexError::UnexpectedEnd)
+impl fmt::Display for LexError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::UnexpectedEnd => write!(f, "unexpected end of source"),
+            Self::UnexpectedCharacter(c) => write!(f, "unexpected char '{c}'"),
+            Self::InvalidEscape(c) => write!(f, "\"\\{c}\" is not a valid string escape"),
+        }
     }
 }
 
@@ -146,7 +147,6 @@ where
     fn next(&mut self) -> Option<char> {
         self.chars.next()
     }
-
     fn next_unwrap(&mut self) -> char {
         match self.next() {
             Some(c) => c,
@@ -154,15 +154,20 @@ where
         }
     }
 
+    fn try_peek(&mut self) -> Result<char> {
+        self.peek().ok_or(LexError::UnexpectedEnd)
+    }
+    fn try_eat_peek(&mut self) -> Result<char> {
+        self.eat_peek().ok_or(LexError::UnexpectedEnd)
+    }
+
     fn eat(&mut self) {
         self.next();
     }
-
     fn eat_to(&mut self, tk: Token) -> Option<Result<Token>> {
         self.eat();
         Some(Ok(tk))
     }
-
     fn eat_peek(&mut self) -> Option<char> {
         self.eat();
         self.peek()
@@ -216,11 +221,11 @@ where
         let mut str = String::new();
 
         loop {
-            match self.peek().check()? {
-                '\\' => match self.eat_peek().check()? {
+            match self.try_peek()? {
+                '\\' => match self.try_eat_peek()? {
                     'n' => {
                         self.eat();
-                        str.push('\n')
+                        str.push('\n');
                     }
                     c => {
                         break Err(LexError::InvalidEscape(c));

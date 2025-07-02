@@ -65,6 +65,7 @@ pub type Result<T> = std::result::Result<T, ParseError>;
 
 pub struct Parser<I: Iterator<Item = Token>> {
     tokens: Peekable<I>,
+    is_next_eol: bool,
 }
 impl<I> Parser<I>
 where
@@ -72,7 +73,10 @@ where
 {
     pub fn new(tokens: I) -> Self {
         let tokens = tokens.peekable();
-        Self { tokens }
+        Self {
+            tokens,
+            is_next_eol: false,
+        }
     }
 
     fn eat(&mut self) {
@@ -81,10 +85,26 @@ where
     fn next_unwrap(&mut self) -> Token {
         self.try_next().unwrap()
     }
+    fn skip_eol(&mut self) -> bool {
+        let mut did_skip = false;
+
+        while matches!(self.tokens.peek(), Some(Token::Eol)) {
+            self.tokens.next();
+            did_skip = true;
+        }
+
+        return did_skip;
+    }
     fn try_peek(&mut self) -> Result<&Token> {
+        // Peek doesn't advance the token stream, so
+        // don't allow it to unset the EOL flag
+        if self.skip_eol() {
+            self.is_next_eol = true;
+        }
         self.tokens.peek().ok_or(ParseError::UnexpectedEnd)
     }
     fn try_next(&mut self) -> Result<Token> {
+        self.is_next_eol = self.skip_eol();
         self.tokens.next().ok_or(ParseError::UnexpectedEnd)
     }
 
@@ -92,6 +112,7 @@ where
         let mut lhs = match self.try_next()? {
             // literal
             Token::Literal(lit) => Box::new(Expr::Literal(lit)),
+
             // start of group
             Token::ParenOpen => {
                 // begin a new expr parse (group mode)
@@ -107,6 +128,7 @@ where
                 self.eat();
                 Box::new(Expr::Block(b))
             }
+
             // unary ops!! (prefix)
             t if t.prefix_precedence().is_some() => {
                 let prec = t.prefix_precedence().unwrap();
@@ -118,6 +140,7 @@ where
                     _ => unreachable!(),
                 })
             }
+
             // unexpected token
             t => return Err(ParseError::UnexpectedToken(t)),
         };
@@ -128,8 +151,18 @@ where
                 Ok(Token::ParenClose) if in_group => break,
                 // end (stream)
                 Err(_) if !in_group => break,
+                // unexpected end
+                Err(err) => return Err(err),
+
+                // operator
+                Ok(t) if t.infix_precedence().is_some() => t,
+
                 // function call
                 Ok(Token::ParenOpen) => {
+                    if self.is_next_eol {
+                        break;
+                    }
+
                     // eat opening paren
                     self.eat();
 
@@ -151,12 +184,9 @@ where
                     lhs = Box::new(Expr::Call(lhs, exprs));
                     continue;
                 }
-                // operator
-                Ok(t) if t.infix_precedence().is_some() => t,
+
                 // unexpected token (stop trying to parse)
                 Ok(_) => break,
-                // unexpected end
-                Err(err) => return Err(err),
             };
 
             let (prec, assoc) = op.infix_precedence().unwrap();

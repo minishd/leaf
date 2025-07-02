@@ -45,6 +45,7 @@ pub enum Token {
     ParenClose,
 
     Comma,
+    Eol,
 
     Return,
 
@@ -176,7 +177,7 @@ where
     fn lex_whitespace(&mut self) -> Option<char> {
         loop {
             match self.peek()? {
-                ' ' | '\t' | '\n' | '\r' => self.eat(),
+                ' ' | '\t' | '\r' => self.eat(),
                 _ => break self.peek(),
             }
         }
@@ -321,6 +322,9 @@ where
                     }
                     continue;
                 }
+
+                // ;, \n eol
+                '\n' | ';' => self.eat_to(Token::Eol),
 
                 // unexpected character
                 c => Some(Err(LexError::UnexpectedCharacter(c))),

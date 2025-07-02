@@ -1,4 +1,4 @@
-use std::{fmt, iter::Peekable};
+use std::{fmt, iter::Peekable, rc::Rc};
 
 use crate::lexer::{Associativity, LexError, Literal, Precedence, Token};
 
@@ -7,37 +7,37 @@ pub mod util;
 #[derive(Debug)]
 pub enum Expr {
     // Data and variables
-    Assignment(Box<Expr>, Box<Expr>),
+    Assignment(Rc<Expr>, Rc<Expr>),
     Literal(Literal),
     // Runtime datatypes
-    Block(Block),
+    Block(Rc<Block>),
     // Control flow
-    Return(Box<Expr>),
-    Call(Box<Expr>, Vec<Expr>),
+    Return(Rc<Expr>),
+    Call(Rc<Expr>, Vec<Rc<Expr>>),
     // Unary operations
-    Negate(Box<Expr>),
-    Not(Box<Expr>),
+    Negate(Rc<Expr>),
+    Not(Rc<Expr>),
     // Binary operations: logical
-    EqualTo(Box<Expr>, Box<Expr>),
-    NotEqualTo(Box<Expr>, Box<Expr>),
-    And(Box<Expr>, Box<Expr>),
-    Or(Box<Expr>, Box<Expr>),
+    EqualTo(Rc<Expr>, Rc<Expr>),
+    NotEqualTo(Rc<Expr>, Rc<Expr>),
+    And(Rc<Expr>, Rc<Expr>),
+    Or(Rc<Expr>, Rc<Expr>),
     // Binary operations: comparison
-    LessThan(Box<Expr>, Box<Expr>),
-    LessThanOrEqualTo(Box<Expr>, Box<Expr>),
-    GreaterThan(Box<Expr>, Box<Expr>),
-    GreaterThanOrEqualTo(Box<Expr>, Box<Expr>),
+    LessThan(Rc<Expr>, Rc<Expr>),
+    LessThanOrEqualTo(Rc<Expr>, Rc<Expr>),
+    GreaterThan(Rc<Expr>, Rc<Expr>),
+    GreaterThanOrEqualTo(Rc<Expr>, Rc<Expr>),
     // Binary operations: arithmetic
-    Add(Box<Expr>, Box<Expr>),
-    Subtract(Box<Expr>, Box<Expr>),
-    Multiply(Box<Expr>, Box<Expr>),
-    Divide(Box<Expr>, Box<Expr>),
-    Exponent(Box<Expr>, Box<Expr>),
+    Add(Rc<Expr>, Rc<Expr>),
+    Subtract(Rc<Expr>, Rc<Expr>),
+    Multiply(Rc<Expr>, Rc<Expr>),
+    Divide(Rc<Expr>, Rc<Expr>),
+    Exponent(Rc<Expr>, Rc<Expr>),
 }
 
 #[derive(Debug, Default)]
 pub struct Block {
-    pub exprs: Vec<Expr>,
+    pub exprs: Vec<Rc<Expr>>,
 }
 
 #[derive(Debug)]
@@ -93,7 +93,7 @@ where
             did_skip = true;
         }
 
-        return did_skip;
+        did_skip
     }
     fn try_peek(&mut self) -> Result<&Token> {
         // Peek doesn't advance the token stream, so
@@ -108,10 +108,10 @@ where
         self.tokens.next().ok_or(ParseError::UnexpectedEnd)
     }
 
-    fn parse_expr(&mut self, min_prec: Precedence, in_group: bool) -> Result<Box<Expr>> {
+    fn parse_expr(&mut self, min_prec: Precedence, in_group: bool) -> Result<Rc<Expr>> {
         let mut lhs = match self.try_next()? {
             // literal
-            Token::Literal(lit) => Box::new(Expr::Literal(lit)),
+            Token::Literal(lit) => Rc::new(Expr::Literal(lit)),
 
             // start of group
             Token::ParenOpen => {
@@ -126,14 +126,14 @@ where
                 let b = self.parse_block(true)?;
                 // skip curly brace
                 self.eat();
-                Box::new(Expr::Block(b))
+                Rc::new(Expr::Block(Rc::new(b)))
             }
 
             // unary ops!! (prefix)
             t if t.prefix_precedence().is_some() => {
                 let prec = t.prefix_precedence().unwrap();
                 let rhs = self.parse_expr(prec, in_group)?;
-                Box::new(match t {
+                Rc::new(match t {
                     Token::Minus => Expr::Negate(rhs),
                     Token::Not => Expr::Not(rhs),
                     Token::Return => Expr::Return(rhs),
@@ -168,7 +168,7 @@ where
 
                     let mut exprs = Vec::new();
                     while !matches!(self.try_peek()?, Token::ParenClose) {
-                        exprs.push(*self.parse_expr(Precedence::Min, false)?);
+                        exprs.push(self.parse_expr(Precedence::Min, false)?);
 
                         // Continue if there is a comma,
                         // ignore closing parens
@@ -181,7 +181,7 @@ where
                     // eat closing paren
                     self.eat();
 
-                    lhs = Box::new(Expr::Call(lhs, exprs));
+                    lhs = Rc::new(Expr::Call(lhs, exprs));
                     continue;
                 }
 
@@ -203,7 +203,7 @@ where
             let rhs = self.parse_expr(prec, in_group)?;
 
             // join to lhs
-            lhs = Box::new(match op {
+            lhs = Rc::new(match op {
                 // equality
                 Token::EqualTo => Expr::EqualTo(lhs, rhs),
                 Token::NotEqualTo => Expr::NotEqualTo(lhs, rhs),
@@ -243,7 +243,7 @@ where
                 Err(ParseError::UnexpectedEnd) if !in_block => break,
 
                 // try to parse expr
-                Ok(_) => exprs.push(*self.parse_expr(Precedence::Min, false)?),
+                Ok(_) => exprs.push(self.parse_expr(Precedence::Min, false)?),
 
                 // invalid
                 Err(err) => return Err(err),

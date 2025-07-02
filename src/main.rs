@@ -1,9 +1,13 @@
-use std::time::Instant;
+use std::{rc::Rc, time::Instant};
 
-use crate::{lexer::Lexer, parser::Parser};
+use crate::{
+    lexer::Lexer,
+    parser::{Expr, Parser},
+};
 
 mod lexer;
 mod parser;
+mod runtime;
 
 fn main() {
     let script = std::fs::read_to_string("./start.leaf").unwrap();
@@ -12,5 +16,6 @@ fn main() {
     let start = Instant::now();
     let block = parser.parse().unwrap();
     println!("Parse took {:?}", start.elapsed());
-    parser::util::display(parser::Expr::Block(block));
+    // parser::util::display(&Rc::new(Expr::Block(Rc::new(block))));
+    runtime::exec(&block).unwrap();
 }

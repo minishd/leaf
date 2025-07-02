@@ -1,16 +1,21 @@
-use std::{fmt, iter::Peekable};
+use std::{fmt, iter::Peekable, rc::Rc};
 
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Ident(String);
 impl fmt::Display for Ident {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         self.0.fmt(f)
     }
 }
+impl AsRef<str> for Ident {
+    fn as_ref(&self) -> &str {
+        &self.0
+    }
+}
 
 #[derive(Debug)]
 pub enum Literal {
-    String(String),
+    String(Rc<String>),
     Integer(i64),
     Boolean(bool),
     Nil,
@@ -234,7 +239,7 @@ where
                 },
                 c if c == delim => {
                     self.eat();
-                    break Ok(Token::Literal(Literal::String(str)));
+                    break Ok(Token::Literal(Literal::String(Rc::new(str))));
                 }
                 _ => str.push(self.next_unwrap()),
             }

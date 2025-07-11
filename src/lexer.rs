@@ -47,6 +47,8 @@ pub enum Token {
     Comma,
     Eol,
 
+    If,
+    Else,
     Return,
 
     Not,
@@ -68,6 +70,7 @@ pub enum Token {
 pub enum Precedence {
     Min,
     Return,
+    If,
     Assign,
     Logical,
     Equality,
@@ -86,6 +89,7 @@ impl Token {
     pub fn prefix_precedence(&self) -> Option<Precedence> {
         Some(match self {
             Token::Return => Precedence::Return,
+            Token::If => Precedence::If,
             Token::Minus | Token::Not => Precedence::NegateNot,
             _ => return None,
         })
@@ -192,6 +196,8 @@ where
 
         match word.as_str() {
             "return" => Token::Return,
+            "if" => Token::If,
+            "else" => Token::Else,
             "true" => Token::Literal(Literal::Boolean(true)),
             "false" => Token::Literal(Literal::Boolean(false)),
             "nil" => Token::Literal(Literal::Nil),

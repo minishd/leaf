@@ -31,6 +31,13 @@ fn fmt_expr(e: Expr, depth: usize) -> String {
             result.push(')');
             result
         }
+        Expr::If(c, t, f) => {
+            let mut result = format!("if ({}) ({})", fmt_expr(*c, depth), fmt_expr(*t, depth));
+            if let Some(f) = f {
+                result.push_str(&format!(" else ({})", fmt_expr(*f, depth)));
+            }
+            result
+        }
         Expr::Return(l) => format!("return {}", fmt_expr(*l, depth)),
         Expr::Block(b) => {
             let mut result = String::new();

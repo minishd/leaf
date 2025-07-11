@@ -12,6 +12,7 @@ pub enum Expr {
     // Runtime datatypes
     Block(Block),
     // Control flow
+    If(Box<Expr>, Box<Expr>, Option<Box<Expr>>),
     Return(Box<Expr>),
     Call(Box<Expr>, Vec<Expr>),
     // Unary operations
@@ -137,6 +138,19 @@ where
                     Token::Minus => Expr::Negate(rhs),
                     Token::Not => Expr::Not(rhs),
                     Token::Return => Expr::Return(rhs),
+                    Token::If => {
+                        // parse the true case
+                        let true_case = self.parse_expr(Precedence::Min, false)?;
+                        // and maybe a false case
+                        let false_case = matches!(self.try_peek(), Ok(Token::Else))
+                            .then(|| {
+                                self.eat();
+                                self.parse_expr(Precedence::Min, false)
+                            })
+                            .transpose()?;
+                        // pack
+                        Expr::If(rhs, true_case, false_case)
+                    }
                     _ => unreachable!(),
                 })
             }
@@ -238,15 +252,14 @@ where
             match self.try_peek() {
                 // end (block)
                 Ok(Token::CurlyClose) if in_block => break,
-                // end (stream) lpwkey idk if this is a good way to check for error
-                // need to add error nodes anyway so whatever
+                // end (stream)
                 Err(ParseError::UnexpectedEnd) if !in_block => break,
 
                 // try to parse expr
                 Ok(_) => exprs.push(*self.parse_expr(Precedence::Min, false)?),
 
                 // invalid
-                Err(err) => return Err(err),
+                Err(_) => unreachable!(),
             }
         }
         Ok(Block { exprs })

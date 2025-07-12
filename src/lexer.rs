@@ -36,6 +36,7 @@ pub enum Token {
     Minus,
     Star,
     Slash,
+    Percent,
     Caret,
 
     CurlyOpen,
@@ -47,6 +48,7 @@ pub enum Token {
     Comma,
     Eol,
 
+    Func,
     If,
     Else,
     Return,
@@ -69,8 +71,6 @@ pub enum Token {
 #[derive(PartialEq, Eq, PartialOrd, Ord, Clone, Copy)]
 pub enum Precedence {
     Min,
-    Return,
-    If,
     Assign,
     Logical,
     Equality,
@@ -78,7 +78,7 @@ pub enum Precedence {
     AddSub,
     MulDiv,
     Pow,
-    NegateNot,
+    Prefix,
 }
 #[derive(PartialEq, Eq)]
 pub enum Associativity {
@@ -88,9 +88,9 @@ pub enum Associativity {
 impl Token {
     pub fn prefix_precedence(&self) -> Option<Precedence> {
         Some(match self {
-            Token::Return => Precedence::Return,
-            Token::If => Precedence::If,
-            Token::Minus | Token::Not => Precedence::NegateNot,
+            Token::Return | Token::If | Token::Func | Token::Minus | Token::Not => {
+                Precedence::Prefix
+            }
             _ => return None,
         })
     }
@@ -195,9 +195,10 @@ where
         }
 
         match word.as_str() {
-            "return" => Token::Return,
+            "func" => Token::Func,
             "if" => Token::If,
             "else" => Token::Else,
+            "return" => Token::Return,
             "true" => Token::Literal(Literal::Boolean(true)),
             "false" => Token::Literal(Literal::Boolean(false)),
             "nil" => Token::Literal(Literal::Nil),
@@ -269,6 +270,9 @@ where
 
                 // / divide
                 '/' => self.eat_to(Token::Slash),
+
+                // % modulo
+                '%' => self.eat_to(Token::Percent),
 
                 // ^ pow
                 '^' => self.eat_to(Token::Caret),

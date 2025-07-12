@@ -9,8 +9,9 @@ pub enum Expr {
     // Data and variables
     Assignment(Box<Expr>, Box<Expr>),
     Literal(Literal),
-    // Runtime datatypes
+    // Non-literal datatypes
     Block(Block),
+    Func(Vec<Expr>, Box<Expr>),
     // Control flow
     If(Box<Expr>, Box<Expr>, Option<Box<Expr>>),
     Return(Box<Expr>),
@@ -66,7 +67,7 @@ pub type Result<T> = std::result::Result<T, ParseError>;
 
 pub struct Parser<I: Iterator<Item = Token>> {
     tokens: Peekable<I>,
-    is_next_eol: bool,
+    saw_eol: bool,
 }
 impl<I> Parser<I>
 where
@@ -76,7 +77,7 @@ where
         let tokens = tokens.peekable();
         Self {
             tokens,
-            is_next_eol: false,
+            saw_eol: false,
         }
     }
 
@@ -100,12 +101,12 @@ where
         // Peek doesn't advance the token stream, so
         // don't allow it to unset the EOL flag
         if self.skip_eol() {
-            self.is_next_eol = true;
+            self.saw_eol = true;
         }
         self.tokens.peek().ok_or(ParseError::UnexpectedEnd)
     }
     fn try_next(&mut self) -> Result<Token> {
-        self.is_next_eol = self.skip_eol();
+        self.saw_eol = self.skip_eol();
         self.tokens.next().ok_or(ParseError::UnexpectedEnd)
     }
 
@@ -133,26 +134,46 @@ where
             // unary ops!! (prefix)
             t if t.prefix_precedence().is_some() => {
                 let prec = t.prefix_precedence().unwrap();
-                let rhs = self.parse_expr(prec, in_group)?;
-                Box::new(match t {
-                    Token::Minus => Expr::Negate(rhs),
-                    Token::Not => Expr::Not(rhs),
-                    Token::Return => Expr::Return(rhs),
-                    Token::If => {
-                        // parse the true case
-                        let true_case = self.parse_expr(Precedence::Min, false)?;
-                        // and maybe a false case
-                        let false_case = matches!(self.try_peek(), Ok(Token::Else))
-                            .then(|| {
-                                self.eat();
-                                self.parse_expr(Precedence::Min, false)
-                            })
-                            .transpose()?;
-                        // pack
-                        Expr::If(rhs, true_case, false_case)
+                // parse function
+                if matches!(t, Token::Func) {
+                    // expect opening paren
+                    let next = self.try_next()?;
+                    if !matches!(next, Token::ParenOpen) {
+                        return Err(ParseError::UnexpectedToken(next));
                     }
-                    _ => unreachable!(),
-                })
+                    // parse args
+                    let args = self.parse_args()?;
+                    // expect closing paren
+                    if !matches!(self.try_peek(), Ok(Token::ParenClose)) {
+                        return Err(ParseError::UnexpectedToken(self.next_unwrap()));
+                    }
+                    self.eat();
+                    // parse body
+                    let body = self.parse_expr(prec, in_group)?;
+                    // pack
+                    Box::new(Expr::Func(args, body))
+                } else {
+                    let rhs = self.parse_expr(prec, in_group)?;
+                    Box::new(match t {
+                        Token::Minus => Expr::Negate(rhs),
+                        Token::Not => Expr::Not(rhs),
+                        Token::Return => Expr::Return(rhs),
+                        Token::If => {
+                            // parse the true case
+                            let true_case = self.parse_expr(prec, in_group)?;
+                            // and maybe a false case
+                            let false_case = matches!(self.try_peek(), Ok(Token::Else))
+                                .then(|| {
+                                    self.eat();
+                                    self.parse_expr(prec, in_group)
+                                })
+                                .transpose()?;
+                            // pack
+                            Expr::If(rhs, true_case, false_case)
+                        }
+                        _ => unreachable!(),
+                    })
+                }
             }
 
             // unexpected token
@@ -173,7 +194,7 @@ where
 
                 // function call
                 Ok(Token::ParenOpen) => {
-                    if self.is_next_eol {
+                    if self.saw_eol {
                         break;
                     }
 
@@ -206,7 +227,7 @@ where
             let (prec, assoc) = op.infix_precedence().unwrap();
 
             // break if this op is meant for previous recursion
-            // or it's equal and we would prefer to build leftward..
+            // or it's equal and we prefer to build leftward
             if prec < min_prec || (prec == min_prec && assoc == Associativity::Left) {
                 break;
             }
@@ -246,6 +267,24 @@ where
 
         Ok(lhs)
     }
+    fn parse_args(&mut self) -> Result<Vec<Expr>> {
+        let mut exprs = Vec::new();
+        while !matches!(self.try_peek(), Ok(Token::ParenClose)) {
+            // try to parse expr
+            exprs.push(*self.parse_expr(Precedence::Min, false)?);
+            // advance
+            let next = self.try_next()?;
+            // check if its the end
+            if matches!(next, Token::ParenClose) {
+                break;
+            }
+            // expect comma
+            if !matches!(next, Token::Comma) {
+                return Err(ParseError::UnexpectedToken(next));
+            }
+        }
+        Ok(exprs)
+    }
     fn parse_block(&mut self, in_block: bool) -> Result<Block> {
         let mut exprs = Vec::new();
         loop {
@@ -256,10 +295,16 @@ where
                 Err(ParseError::UnexpectedEnd) if !in_block => break,
 
                 // try to parse expr
-                Ok(_) => exprs.push(*self.parse_expr(Precedence::Min, false)?),
+                Ok(_) => {
+                    exprs.push(*self.parse_expr(Precedence::Min, false)?);
+                    // expect eol or eof
+                    if !matches!(self.try_peek(), Err(ParseError::UnexpectedEnd)) && !self.saw_eol {
+                        return Err(ParseError::UnexpectedToken(self.next_unwrap()));
+                    }
+                }
 
                 // invalid
-                Err(_) => unreachable!(),
+                Err(err) => return Err(err),
             }
         }
         Ok(Block { exprs })

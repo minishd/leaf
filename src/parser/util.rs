@@ -38,7 +38,7 @@ fn fmt_expr(e: Expr, depth: usize) -> String {
             }
             result
         }
-        Expr::Return(l) => format!("return {}", fmt_expr(*l, depth)),
+        Expr::Return(l) => format!("return ({})", fmt_expr(*l, depth)),
         Expr::Block(b) => {
             let mut result = String::new();
             let len = b.exprs.len();
@@ -54,6 +54,14 @@ fn fmt_expr(e: Expr, depth: usize) -> String {
             }
             result
         }
+        Expr::Func(a, e) => format!(
+            "(func({}) ({}))",
+            a.into_iter()
+                .map(|e| fmt_expr(e, depth))
+                .collect::<Vec<_>>()
+                .join(", "),
+            fmt_expr(*e, depth)
+        ),
         Expr::Negate(l) => format!("(-{})", fmt_expr(*l, depth)),
         Expr::Not(l) => format!("(!{})", fmt_expr(*l, depth)),
         Expr::EqualTo(l, r) => fmt_binop(*l, *r, "==", depth),

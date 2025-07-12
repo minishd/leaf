@@ -1,5 +1,7 @@
 use std::{fmt, iter::Peekable};
 
+use strum::EnumDiscriminants;
+
 #[derive(Debug)]
 pub struct Ident(String);
 impl fmt::Display for Ident {
@@ -28,7 +30,8 @@ impl fmt::Display for Literal {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, EnumDiscriminants)]
+#[strum_discriminants(name(TokenKind))]
 pub enum Token {
     Equals,
 
@@ -46,7 +49,7 @@ pub enum Token {
     ParenClose,
 
     Comma,
-    Eol,
+    Semicolon,
 
     Func,
     If,
@@ -181,7 +184,7 @@ where
     fn lex_whitespace(&mut self) -> Option<char> {
         loop {
             match self.peek()? {
-                ' ' | '\t' | '\r' => self.eat(),
+                ' ' | '\t' | '\n' | '\r' => self.eat(),
                 _ => break self.peek(),
             }
         }
@@ -333,8 +336,8 @@ where
                     continue;
                 }
 
-                // ;, \n eol
-                '\n' | ';' => self.eat_to(Token::Eol),
+                // ; semicolon
+                ';' => self.eat_to(Token::Semicolon),
 
                 // unexpected character
                 c => Some(Err(LexError::UnexpectedCharacter(c))),

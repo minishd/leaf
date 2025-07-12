@@ -1,6 +1,8 @@
 use std::{fmt, iter::Peekable};
 
-use crate::lexer::{Associativity, LexError, Literal, Precedence, Token};
+use strum::IntoDiscriminant;
+
+use crate::lexer::{Associativity, LexError, Literal, Precedence, Token, TokenKind};
 
 pub mod util;
 
@@ -67,7 +69,6 @@ pub type Result<T> = std::result::Result<T, ParseError>;
 
 pub struct Parser<I: Iterator<Item = Token>> {
     tokens: Peekable<I>,
-    saw_eol: bool,
 }
 impl<I> Parser<I>
 where
@@ -75,10 +76,7 @@ where
 {
     pub fn new(tokens: I) -> Self {
         let tokens = tokens.peekable();
-        Self {
-            tokens,
-            saw_eol: false,
-        }
+        Self { tokens }
     }
 
     fn eat(&mut self) {
@@ -87,27 +85,31 @@ where
     fn next_unwrap(&mut self) -> Token {
         self.try_next().unwrap()
     }
-    fn skip_eol(&mut self) -> bool {
-        let mut did_skip = false;
 
-        while matches!(self.tokens.peek(), Some(Token::Eol)) {
-            self.tokens.next();
-            did_skip = true;
-        }
-
-        return did_skip;
-    }
     fn try_peek(&mut self) -> Result<&Token> {
-        // Peek doesn't advance the token stream, so
-        // don't allow it to unset the EOL flag
-        if self.skip_eol() {
-            self.saw_eol = true;
-        }
         self.tokens.peek().ok_or(ParseError::UnexpectedEnd)
     }
     fn try_next(&mut self) -> Result<Token> {
-        self.saw_eol = self.skip_eol();
         self.tokens.next().ok_or(ParseError::UnexpectedEnd)
+    }
+
+    fn expect_next(&mut self, kind: TokenKind) -> Result<()> {
+        let t = self.try_next()?;
+
+        if t.discriminant() != kind {
+            return Err(ParseError::UnexpectedToken(t));
+        }
+
+        Ok(())
+    }
+    fn is_next(&mut self, kind: Option<TokenKind>) -> bool {
+        match self.try_peek() {
+            Ok(t) if Some(t.discriminant()) == kind => true,
+            Ok(_) => false,
+
+            Err(ParseError::UnexpectedEnd) if kind.is_none() => true,
+            Err(_) => unreachable!(),
+        }
     }
 
     fn parse_expr(&mut self, min_prec: Precedence, in_group: bool) -> Result<Box<Expr>> {
@@ -125,10 +127,11 @@ where
             }
             // start of a block
             Token::CurlyOpen => {
-                let b = self.parse_block(true)?;
+                let exprs =
+                    self.parse_delimited_until(TokenKind::Semicolon, Some(TokenKind::CurlyClose))?;
                 // skip curly brace
                 self.eat();
-                Box::new(Expr::Block(b))
+                Box::new(Expr::Block(Block { exprs }))
             }
 
             // unary ops!! (prefix)
@@ -136,20 +139,15 @@ where
                 let prec = t.prefix_precedence().unwrap();
                 // parse function
                 if matches!(t, Token::Func) {
-                    // expect opening paren
-                    let next = self.try_next()?;
-                    if !matches!(next, Token::ParenOpen) {
-                        return Err(ParseError::UnexpectedToken(next));
-                    }
                     // parse args
-                    let args = self.parse_args()?;
-                    // expect closing paren
-                    if !matches!(self.try_peek(), Ok(Token::ParenClose)) {
-                        return Err(ParseError::UnexpectedToken(self.next_unwrap()));
-                    }
+                    self.expect_next(TokenKind::ParenOpen)?;
+                    let args =
+                        self.parse_delimited_until(TokenKind::Comma, Some(TokenKind::ParenClose))?;
                     self.eat();
+
                     // parse body
                     let body = self.parse_expr(prec, in_group)?;
+
                     // pack
                     Box::new(Expr::Func(args, body))
                 } else {
@@ -194,25 +192,12 @@ where
 
                 // function call
                 Ok(Token::ParenOpen) => {
-                    if self.saw_eol {
-                        break;
-                    }
-
                     // eat opening paren
                     self.eat();
 
-                    let mut exprs = Vec::new();
-                    while !matches!(self.try_peek()?, Token::ParenClose) {
-                        exprs.push(*self.parse_expr(Precedence::Min, false)?);
+                    let exprs =
+                        self.parse_delimited_until(TokenKind::Comma, Some(TokenKind::ParenClose))?;
 
-                        // Continue if there is a comma,
-                        // ignore closing parens
-                        match self.try_peek()? {
-                            Token::Comma => self.eat(),
-                            Token::ParenClose => {}
-                            _ => return Err(ParseError::UnexpectedToken(self.next_unwrap())),
-                        }
-                    }
                     // eat closing paren
                     self.eat();
 
@@ -267,49 +252,37 @@ where
 
         Ok(lhs)
     }
-    fn parse_args(&mut self) -> Result<Vec<Expr>> {
+
+    fn parse_delimited_until(
+        &mut self,
+        delim: TokenKind,
+        until: Option<TokenKind>,
+    ) -> Result<Vec<Expr>> {
         let mut exprs = Vec::new();
-        while !matches!(self.try_peek(), Ok(Token::ParenClose)) {
+
+        while !self.is_next(until) {
+            // skip delimiter
+            if self.is_next(Some(delim)) {
+                self.eat();
+                continue;
+            }
+
             // try to parse expr
             exprs.push(*self.parse_expr(Precedence::Min, false)?);
-            // advance
-            let next = self.try_next()?;
-            // check if its the end
-            if matches!(next, Token::ParenClose) {
+
+            // check for end
+            if self.is_next(until) {
                 break;
             }
-            // expect comma
-            if !matches!(next, Token::Comma) {
-                return Err(ParseError::UnexpectedToken(next));
-            }
+
+            // check for delim
+            self.expect_next(delim)?;
         }
         Ok(exprs)
     }
-    fn parse_block(&mut self, in_block: bool) -> Result<Block> {
-        let mut exprs = Vec::new();
-        loop {
-            match self.try_peek() {
-                // end (block)
-                Ok(Token::CurlyClose) if in_block => break,
-                // end (stream)
-                Err(ParseError::UnexpectedEnd) if !in_block => break,
 
-                // try to parse expr
-                Ok(_) => {
-                    exprs.push(*self.parse_expr(Precedence::Min, false)?);
-                    // expect eol or eof
-                    if !matches!(self.try_peek(), Err(ParseError::UnexpectedEnd)) && !self.saw_eol {
-                        return Err(ParseError::UnexpectedToken(self.next_unwrap()));
-                    }
-                }
-
-                // invalid
-                Err(err) => return Err(err),
-            }
-        }
-        Ok(Block { exprs })
-    }
     pub fn parse(&mut self) -> Result<Block> {
-        self.parse_block(false)
+        let exprs = self.parse_delimited_until(TokenKind::Semicolon, None)?;
+        Ok(Block { exprs })
     }
 }

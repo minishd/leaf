@@ -2,6 +2,7 @@ use std::time::Instant;
 
 use crate::{lexer::Lexer, parser::Parser};
 
+mod kind;
 mod lexer;
 mod parser;
 

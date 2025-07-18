@@ -1,8 +1,9 @@
 use std::{fmt, iter::Peekable};
 
-use strum::IntoDiscriminant;
-
-use crate::lexer::{Associativity, LexError, Literal, Precedence, Token, TokenKind};
+use crate::{
+    kind::Kind,
+    lexer::{Associativity, LexError, Literal, Precedence, Token, TokenKind},
+};
 
 pub mod util;
 
@@ -96,7 +97,7 @@ where
     fn expect_next(&mut self, kind: TokenKind) -> Result<()> {
         let t = self.try_next()?;
 
-        if t.discriminant() != kind {
+        if t.kind() != kind {
             return Err(ParseError::UnexpectedToken(t));
         }
 
@@ -104,7 +105,7 @@ where
     }
     fn is_next(&mut self, kind: Option<TokenKind>) -> bool {
         match self.try_peek() {
-            Ok(t) if Some(t.discriminant()) == kind => true,
+            Ok(t) if Some(t.kind()) == kind => true,
             Ok(_) => false,
 
             Err(ParseError::UnexpectedEnd) if kind.is_none() => true,

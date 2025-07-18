@@ -1,6 +1,6 @@
-use std::{fmt, iter::Peekable};
+use std::{fmt, iter::Peekable, num::ParseIntError};
 
-use strum::EnumDiscriminants;
+use crate::kinds;
 
 #[derive(Debug)]
 pub struct Ident(String);
@@ -30,47 +30,38 @@ impl fmt::Display for Literal {
     }
 }
 
-#[derive(Debug, EnumDiscriminants)]
-#[strum_discriminants(name(TokenKind))]
-pub enum Token {
+kinds!(
+    Token,
+    TokenKind,
     Equals,
-
     Plus,
     Minus,
     Star,
     Slash,
     Percent,
     Caret,
-
     CurlyOpen,
     CurlyClose,
-
     ParenOpen,
     ParenClose,
-
     Comma,
     Semicolon,
-
+    Eol,
     Func,
     If,
     Else,
     Return,
-
     Not,
-
     EqualTo,
     NotEqualTo,
-
     And,
     Or,
-
     LessThan,
     LessThanOrEqualTo,
     GreaterThan,
     GreaterThanOrEqualTo,
-
-    Literal(Literal),
-}
+    Literal(Literal = Literal::Nil),
+);
 #[derive(PartialEq, Eq, PartialOrd, Ord, Clone, Copy)]
 pub enum Precedence {
     Min,
@@ -116,6 +107,7 @@ impl Token {
 
 #[derive(Debug)]
 pub enum LexError {
+    InvalidInteger(ParseIntError),
     InvalidEscape(char),
     UnexpectedCharacter(char),
     UnexpectedEnd,
@@ -123,10 +115,16 @@ pub enum LexError {
 impl fmt::Display for LexError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::InvalidInteger(err) => write!(f, "invalid integer: {err}"),
             Self::UnexpectedEnd => write!(f, "unexpected end of source"),
             Self::UnexpectedCharacter(c) => write!(f, "unexpected char '{c}'"),
             Self::InvalidEscape(c) => write!(f, "\"\\{c}\" is not a valid string escape"),
         }
+    }
+}
+impl From<ParseIntError> for LexError {
+    fn from(err: ParseIntError) -> Self {
+        Self::InvalidInteger(err)
     }
 }
 
@@ -137,6 +135,10 @@ where
     I: Iterator<Item = char>,
 {
     chars: Peekable<I>,
+}
+
+fn t(tk: Token) -> Option<Result<Token>> {
+    Some(Ok(tk))
 }
 
 impl<I> Lexer<I>
@@ -209,7 +211,7 @@ where
         }
     }
 
-    fn lex_integer(&mut self) -> Token {
+    fn lex_integer(&mut self) -> Result<Token> {
         let mut n_str = String::new();
 
         // we don't lex negatives. the impl for that is
@@ -221,9 +223,9 @@ where
 
         // we can only read digits 0 to 9 so this should not fail
         // .. unless we overflow
-        let n = n_str.parse().unwrap();
+        let n = n_str.parse()?;
 
-        Token::Literal(Literal::Integer(n))
+        Ok(Token::Literal(Literal::Integer(n)))
     }
 
     fn lex_string(&mut self) -> Result<Token> {
@@ -283,18 +285,21 @@ where
                 // , comma
                 ',' => self.eat_to(Token::Comma),
 
+                // ; semicolon
+                ';' => self.eat_to(Token::Semicolon),
+
                 // = equals
                 // or == equal to
                 '=' => match self.eat_peek() {
                     Some('=') => self.eat_to(Token::EqualTo),
-                    _ => Some(Ok(Token::Equals)),
+                    _ => t(Token::Equals),
                 },
 
                 // ! not
                 // or != not equal to
                 '!' => match self.eat_peek() {
                     Some('=') => self.eat_to(Token::NotEqualTo),
-                    _ => Some(Ok(Token::Not)),
+                    _ => t(Token::Not),
                 },
 
                 // && and
@@ -307,21 +312,21 @@ where
                 // or >= greater than/equal to
                 '>' => match self.eat_peek() {
                     Some('=') => self.eat_to(Token::GreaterThanOrEqualTo),
-                    _ => Some(Ok(Token::GreaterThan)),
+                    _ => t(Token::GreaterThan),
                 },
 
                 // < less than
                 // or <= less than/equal to
                 '<' => match self.eat_peek() {
                     Some('=') => self.eat_to(Token::LessThanOrEqualTo),
-                    _ => Some(Ok(Token::LessThan)),
+                    _ => t(Token::LessThan),
                 },
 
                 // a-zA-Z_ start of word
                 'a'..='z' | 'A'..='Z' | '_' => Some(Ok(self.lex_word())),
 
                 // 0-9 integer
-                '0'..='9' => Some(Ok(self.lex_integer())),
+                '0'..='9' => Some(self.lex_integer()),
 
                 // " strings
                 '"' => Some(self.lex_string()),
@@ -335,9 +340,6 @@ where
                     }
                     continue;
                 }
-
-                // ; semicolon
-                ';' => self.eat_to(Token::Semicolon),
 
                 // unexpected character
                 c => Some(Err(LexError::UnexpectedCharacter(c))),

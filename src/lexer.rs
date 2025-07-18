@@ -45,7 +45,6 @@ kinds!(
     ParenOpen,
     ParenClose,
     Comma,
-    Semicolon,
     Eol,
     Func,
     If,
@@ -284,9 +283,6 @@ where
 
                 // , comma
                 ',' => self.eat_to(Token::Comma),
-
-                // ; semicolon
-                ';' => self.eat_to(Token::Semicolon),
 
                 // = equals
                 // or == equal to

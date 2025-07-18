@@ -128,8 +128,7 @@ where
             }
             // start of a block
             Token::CurlyOpen => {
-                let exprs =
-                    self.parse_delimited_until(TokenKind::Semicolon, Some(TokenKind::CurlyClose))?;
+                let exprs = self.parse_until(Some(TokenKind::CurlyClose))?;
                 // skip curly brace
                 self.eat();
                 Box::new(Expr::Block(Block { exprs }))
@@ -254,6 +253,22 @@ where
         Ok(lhs)
     }
 
+    fn parse_until(&mut self, until: Option<TokenKind>) -> Result<Vec<Expr>> {
+        let mut exprs = Vec::new();
+
+        while !self.is_next(until) {
+            // try to parse expr
+            exprs.push(*self.parse_expr(Precedence::Min, false)?);
+
+            // check for end
+            if self.is_next(until) {
+                break;
+            }
+        }
+
+        Ok(exprs)
+    }
+
     fn parse_delimited_until(
         &mut self,
         delim: TokenKind,
@@ -283,7 +298,7 @@ where
     }
 
     pub fn parse(&mut self) -> Result<Block> {
-        let exprs = self.parse_delimited_until(TokenKind::Semicolon, None)?;
+        let exprs = self.parse_until(None)?;
         Ok(Block { exprs })
     }
 }

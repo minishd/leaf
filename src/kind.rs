@@ -6,28 +6,28 @@ pub trait Kind {
 
 #[macro_export]
 macro_rules! kinds {
-    ($b:ident, $k:ident, $( $v:ident $( ( $($vty:ty = $vval:expr),* ) )?),* $(,)?) => {
+    ($base:ident, $kind:ident, $( $v:ident $( ( $($vty:ty = $vval:expr),* ) )?),* $(,)?) => {
         #[derive(Debug)]
-        pub enum $b {
+        pub enum $base {
             $( $v $( ( $($vty),* ) )?, )*
         }
-        impl $crate::kind::Kind for $b {
-            type Kinds = $k;
+        impl $crate::kind::Kind for $base {
+            type Kinds = $kind;
 
-            fn kind(&self) -> $k {
-                $k (std::mem::discriminant(self))
+            fn kind(&self) -> $kind {
+                $kind(std::mem::discriminant(self))
             }
         }
 
         #[derive(PartialEq, Eq, Clone, Copy)]
-        pub struct $k(std::mem::Discriminant<$b>);
+        pub struct $kind(std::mem::Discriminant<$base>);
 
-        impl $k {
+        impl $kind {
             $(
                 #[allow(non_upper_case_globals, dead_code)]
-                pub const $v: Self = $k (
+                pub const $v: Self = $kind (
                     std::mem::discriminant(
-                        &( $b::$v $( ( $($vval),* ) )? )
+                        &( $base::$v $( ( $($vval),* ) )? )
                     )
                 );
             )*

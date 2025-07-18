@@ -1,3 +1,5 @@
+use std::fmt::Write;
+
 use crate::parser::Expr;
 
 pub fn display(e: Expr) {
@@ -34,7 +36,7 @@ fn fmt_expr(e: Expr, depth: usize) -> String {
         Expr::If(c, t, f) => {
             let mut result = format!("if ({}) ({})", fmt_expr(*c, depth), fmt_expr(*t, depth));
             if let Some(f) = f {
-                result.push_str(&format!(" else ({})", fmt_expr(*f, depth)));
+                let _ = write!(result, " else ({})", fmt_expr(*f, depth));
             }
             result
         }

@@ -137,40 +137,47 @@ where
             // unary ops!! (prefix)
             t if t.prefix_precedence().is_some() => {
                 let prec = t.prefix_precedence().unwrap();
-                // parse function
-                if matches!(t, Token::Func) {
-                    // parse args
-                    self.expect_next(TokenKind::ParenOpen)?;
-                    let args =
-                        self.parse_delimited_until(TokenKind::Comma, Some(TokenKind::ParenClose))?;
-                    self.eat();
+                match t {
+                    // parse function
+                    Token::Func => {
+                        // parse args
+                        self.expect_next(TokenKind::ParenOpen)?;
+                        let args = self
+                            .parse_delimited_until(TokenKind::Comma, Some(TokenKind::ParenClose))?;
+                        self.eat();
+                        // parse body
+                        let body = self.parse_expr(prec, in_group)?;
+                        // pack
+                        Box::new(Expr::Func(args, body))
+                    }
+                    // parse if
+                    Token::If => {
+                        // parse the condition
+                        let cond = self.parse_expr(Precedence::Min, false)?;
+                        // parse the true case
+                        let true_case = self.parse_expr(prec, in_group)?;
+                        // and maybe a false case
+                        let false_case = matches!(self.try_peek(), Ok(Token::Else))
+                            .then(|| {
+                                self.eat();
+                                self.parse_expr(prec, in_group)
+                            })
+                            .transpose()?;
+                        // pack
+                        Box::new(Expr::If(cond, true_case, false_case))
+                    }
 
-                    // parse body
-                    let body = self.parse_expr(prec, in_group)?;
+                    // another op
+                    _ => {
+                        let rhs = self.parse_expr(prec, in_group)?;
+                        Box::new(match t {
+                            Token::Minus => Expr::Negate(rhs),
+                            Token::Not => Expr::Not(rhs),
+                            Token::Return => Expr::Return(rhs),
 
-                    // pack
-                    Box::new(Expr::Func(args, body))
-                } else {
-                    let rhs = self.parse_expr(prec, in_group)?;
-                    Box::new(match t {
-                        Token::Minus => Expr::Negate(rhs),
-                        Token::Not => Expr::Not(rhs),
-                        Token::Return => Expr::Return(rhs),
-                        Token::If => {
-                            // parse the true case
-                            let true_case = self.parse_expr(prec, in_group)?;
-                            // and maybe a false case
-                            let false_case = matches!(self.try_peek(), Ok(Token::Else))
-                                .then(|| {
-                                    self.eat();
-                                    self.parse_expr(prec, in_group)
-                                })
-                                .transpose()?;
-                            // pack
-                            Expr::If(rhs, true_case, false_case)
-                        }
-                        _ => unreachable!(),
-                    })
+                            _ => unreachable!(),
+                        })
+                    }
                 }
             }
 

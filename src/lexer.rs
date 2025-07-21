@@ -1,4 +1,8 @@
-use std::{fmt, iter::Peekable, num::ParseIntError};
+use std::{
+    fmt,
+    iter::Peekable,
+    num::{ParseFloatError, ParseIntError},
+};
 
 use crate::kinds;
 
@@ -14,6 +18,7 @@ impl fmt::Display for Ident {
 pub enum Literal {
     String(String),
     Integer(i64),
+    Float(f64),
     Boolean(bool),
     Nil,
     Ident(Ident),
@@ -23,6 +28,7 @@ impl fmt::Display for Literal {
         match self {
             Literal::String(s) => write!(f, "\"{s}\""),
             Literal::Integer(n) => write!(f, "{n}"),
+            Literal::Float(n) => write!(f, "{n}"),
             Literal::Boolean(b) => write!(f, "{b}"),
             Literal::Ident(id) => write!(f, "{id}"),
             Literal::Nil => write!(f, "nil"),
@@ -39,7 +45,11 @@ kinds!(
     Star,
     Slash,
     Percent,
-    Caret,
+    StarStar,
+    PlusEquals,
+    MinusEquals,
+    StarEquals,
+    SlashEquals,
     CurlyOpen,
     CurlyClose,
     ParenOpen,
@@ -65,11 +75,12 @@ kinds!(
 pub enum Precedence {
     Min,
     Assign,
+    WithAssign,
     Logical,
     Equality,
     Relational,
     AddSub,
-    MulDiv,
+    MulDivMod,
     Pow,
     Prefix,
 }
@@ -96,9 +107,14 @@ impl Token {
             | Token::GreaterThanOrEqualTo => (Precedence::Relational, Associativity::Left),
             Token::And | Token::Or => (Precedence::Logical, Associativity::Left),
             Token::Plus | Token::Minus => (Precedence::AddSub, Associativity::Left),
-            Token::Star | Token::Slash => (Precedence::MulDiv, Associativity::Left),
-            Token::Caret => (Precedence::Pow, Associativity::Right),
+            Token::Star | Token::Slash | Token::Percent => {
+                (Precedence::MulDivMod, Associativity::Left)
+            }
+            Token::StarStar => (Precedence::Pow, Associativity::Right),
             Token::Equals => (Precedence::Assign, Associativity::Right),
+            Token::PlusEquals | Token::MinusEquals | Token::StarEquals | Token::SlashEquals => {
+                (Precedence::WithAssign, Associativity::Right)
+            }
             _ => return None,
         })
     }
@@ -107,6 +123,7 @@ impl Token {
 #[derive(Debug)]
 pub enum LexError {
     InvalidInteger(ParseIntError),
+    InvalidFloat(ParseFloatError),
     InvalidEscape(char),
     UnexpectedCharacter(char),
     UnexpectedEnd,
@@ -115,6 +132,7 @@ impl fmt::Display for LexError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::InvalidInteger(err) => write!(f, "invalid integer: {err}"),
+            Self::InvalidFloat(err) => write!(f, "invalid float: {err}"),
             Self::UnexpectedEnd => write!(f, "unexpected end of source"),
             Self::UnexpectedCharacter(c) => write!(f, "unexpected char '{c}'"),
             Self::InvalidEscape(c) => write!(f, "\"\\{c}\" is not a valid string escape"),
@@ -124,6 +142,11 @@ impl fmt::Display for LexError {
 impl From<ParseIntError> for LexError {
     fn from(err: ParseIntError) -> Self {
         Self::InvalidInteger(err)
+    }
+}
+impl From<ParseFloatError> for LexError {
+    fn from(err: ParseFloatError) -> Self {
+        Self::InvalidFloat(err)
     }
 }
 
@@ -210,21 +233,27 @@ where
         }
     }
 
-    fn lex_integer(&mut self) -> Result<Token> {
+    fn lex_number(&mut self) -> Result<Token> {
         let mut n_str = String::new();
 
         // we don't lex negatives. the impl for that is
         // a negation of a positive number at runtime.
         // maybe that's kind of stupid though, lol
-        while let Some('0'..='9') = self.peek() {
+        let mut is_float = false;
+        while let Some('0'..='9' | '.') = self.peek() {
+            if self.peek() == Some('.') {
+                is_float = true;
+            }
             n_str.push(self.next_unwrap());
         }
 
-        // we can only read digits 0 to 9 so this should not fail
-        // .. unless we overflow
-        let n = n_str.parse()?;
+        let lit = if is_float {
+            Literal::Float(n_str.parse()?)
+        } else {
+            Literal::Integer(n_str.parse()?)
+        };
 
-        Ok(Token::Literal(Literal::Integer(n)))
+        Ok(Token::Literal(lit))
     }
 
     fn lex_string(&mut self) -> Result<Token> {
@@ -264,22 +293,46 @@ where
                 ')' => self.eat_to(Token::ParenClose),
 
                 // + add
-                '+' => self.eat_to(Token::Plus),
+                // or += add eq
+                '+' => match self.eat_peek() {
+                    Some('=') => self.eat_to(Token::PlusEquals),
+                    _ => t(Token::Plus),
+                },
 
                 // - subtract
-                '-' => self.eat_to(Token::Minus),
+                // or -= sub eq
+                '-' => match self.eat_peek() {
+                    Some('=') => self.eat_to(Token::MinusEquals),
+                    _ => t(Token::Minus),
+                },
 
                 // * multiply
-                '*' => self.eat_to(Token::Star),
+                // or *= mult eq
+                // or ** pow
+                '*' => match self.eat_peek() {
+                    Some('=') => self.eat_to(Token::StarEquals),
+                    Some('*') => self.eat_to(Token::StarStar),
+                    _ => t(Token::Star),
+                },
 
                 // / divide
-                '/' => self.eat_to(Token::Slash),
+                // or /= div eq
+                // or // comment
+                '/' => match self.eat_peek() {
+                    Some('=') => self.eat_to(Token::SlashEquals),
+                    Some('/') => {
+                        // skip the rest of the line
+                        // this leaves the newline btw
+                        while !matches!(self.peek(), Some('\n') | None) {
+                            self.eat();
+                        }
+                        continue;
+                    }
+                    _ => t(Token::Slash),
+                },
 
                 // % modulo
                 '%' => self.eat_to(Token::Percent),
-
-                // ^ pow
-                '^' => self.eat_to(Token::Caret),
 
                 // , comma
                 ',' => self.eat_to(Token::Comma),
@@ -322,20 +375,10 @@ where
                 'a'..='z' | 'A'..='Z' | '_' => Some(Ok(self.lex_word())),
 
                 // 0-9 integer
-                '0'..='9' => Some(self.lex_integer()),
+                '0'..='9' | '.' => Some(self.lex_number()),
 
                 // " strings
                 '"' => Some(self.lex_string()),
-
-                // # comments
-                '#' => {
-                    // skip the rest of the line
-                    // this leaves the newline btw
-                    while !matches!(self.peek(), Some('\n') | None) {
-                        self.eat();
-                    }
-                    continue;
-                }
 
                 // unexpected character
                 c => Some(Err(LexError::UnexpectedCharacter(c))),

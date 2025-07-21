@@ -10,7 +10,7 @@ pub mod util;
 #[derive(Debug)]
 pub enum Expr {
     // Data and variables
-    Assignment(Box<Expr>, Box<Expr>),
+    Assign(Box<Expr>, Box<Expr>),
     Literal(Literal),
     // Non-literal datatypes
     Block(Block),
@@ -38,6 +38,12 @@ pub enum Expr {
     Multiply(Box<Expr>, Box<Expr>),
     Divide(Box<Expr>, Box<Expr>),
     Exponent(Box<Expr>, Box<Expr>),
+    Modulo(Box<Expr>, Box<Expr>),
+    // Binary operations: arithmetic w/ assignment
+    AddAssign(Box<Expr>, Box<Expr>),
+    SubtractAssign(Box<Expr>, Box<Expr>),
+    MultiplyAssign(Box<Expr>, Box<Expr>),
+    DivideAssign(Box<Expr>, Box<Expr>),
 }
 
 #[derive(Debug, Default)]
@@ -245,13 +251,18 @@ where
                 // add, subtract
                 Token::Plus => Expr::Add(lhs, rhs),
                 Token::Minus => Expr::Subtract(lhs, rhs),
+                Token::PlusEquals => Expr::AddAssign(lhs, rhs),
+                Token::MinusEquals => Expr::SubtractAssign(lhs, rhs),
                 // multiply, divide
                 Token::Star => Expr::Multiply(lhs, rhs),
                 Token::Slash => Expr::Divide(lhs, rhs),
-                // exponent
-                Token::Caret => Expr::Exponent(lhs, rhs),
+                Token::StarEquals => Expr::MultiplyAssign(lhs, rhs),
+                Token::SlashEquals => Expr::DivideAssign(lhs, rhs),
+                // exponent, modulo
+                Token::StarStar => Expr::Exponent(lhs, rhs),
+                Token::Percent => Expr::Modulo(lhs, rhs),
                 // assignment
-                Token::Equals => Expr::Assignment(lhs, rhs),
+                Token::Equals => Expr::Assign(lhs, rhs),
                 // unreachable as all tokens with precedences are covered above
                 _ => unreachable!(),
             });

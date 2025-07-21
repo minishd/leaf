@@ -18,7 +18,11 @@ fn fmt_binop(left: Expr, right: Expr, op: &str, depth: usize) -> String {
 
 fn fmt_expr(e: Expr, depth: usize) -> String {
     match e {
-        Expr::Assignment(l, r) => fmt_binop(*l, *r, "=", depth),
+        Expr::Assign(l, r) => fmt_binop(*l, *r, "=", depth),
+        Expr::AddAssign(l, r) => fmt_binop(*l, *r, "+=", depth),
+        Expr::SubtractAssign(l, r) => fmt_binop(*l, *r, "-=", depth),
+        Expr::MultiplyAssign(l, r) => fmt_binop(*l, *r, "*=", depth),
+        Expr::DivideAssign(l, r) => fmt_binop(*l, *r, "/=", depth),
         Expr::Literal(l) => l.to_string(),
         Expr::Call(l, r) => {
             let mut result = fmt_expr(*l, depth);
@@ -78,6 +82,7 @@ fn fmt_expr(e: Expr, depth: usize) -> String {
         Expr::Subtract(l, r) => fmt_binop(*l, *r, "-", depth),
         Expr::Multiply(l, r) => fmt_binop(*l, *r, "*", depth),
         Expr::Divide(l, r) => fmt_binop(*l, *r, "/", depth),
-        Expr::Exponent(l, r) => fmt_binop(*l, *r, "^", depth),
+        Expr::Exponent(l, r) => fmt_binop(*l, *r, "**", depth),
+        Expr::Modulo(l, r) => fmt_binop(*l, *r, "%", depth),
     }
 }

@@ -7,7 +7,7 @@ mod lexer;
 mod parser;
 
 fn main() {
-    let script = std::fs::read_to_string("./start.leaf").unwrap();
+    let script = std::fs::read_to_string("./start.lf").unwrap();
     let lexer = Lexer::new(script.chars());
     let mut parser = Parser::new(lexer.map(Result::unwrap));
     let start = Instant::now();

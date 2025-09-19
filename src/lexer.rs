@@ -6,7 +6,7 @@ use std::{
 
 use crate::kinds;
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct Ident(String);
 impl fmt::Display for Ident {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {

@@ -2,6 +2,7 @@ use std::time::Instant;
 
 use crate::{lexer::Lexer, parser::Parser};
 
+mod compiler;
 mod kind;
 mod lexer;
 mod parser;
@@ -13,5 +14,11 @@ fn main() {
     let start = Instant::now();
     let block = parser.parse().unwrap();
     println!("Parse took {:?}", start.elapsed());
-    parser::util::display(parser::Expr::Block(block));
+    let e = parser::Expr::Block(block);
+    // parser::util::display(e);
+    let start = Instant::now();
+    let mut analysis = compiler::Analyzer::new();
+    analysis.analyze(e);
+    println!("Analysis took {:?}", start.elapsed());
+    println!("{analysis:?}");
 }

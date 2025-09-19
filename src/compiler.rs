@@ -10,6 +10,7 @@ struct AnalysisScope {
     prev: Option<ScopeIdx>,
     next: Vec<ScopeIdx>,
     idents: Vec<(Ident, u16)>,
+    top_level_exprs: Vec<Expr>,
 }
 
 impl AnalysisScope {
@@ -102,7 +103,9 @@ impl Analyzer {
             Expr::Block(a) => {
                 // blocks have their own scope
                 self.new_scope();
+                let sc = self.get_scope();
                 // analyze the contents in the new scope
+                sc.top_level_exprs = a.exprs.clone();
                 for e in a.exprs {
                     self.analyze(e);
                 }

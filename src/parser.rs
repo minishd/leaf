@@ -7,7 +7,7 @@ use crate::{
 
 pub mod util;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Expr {
     // Data and variables
     Assign(Box<Expr>, Box<Expr>),
@@ -46,7 +46,7 @@ pub enum Expr {
     DivideAssign(Box<Expr>, Box<Expr>),
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct Block {
     pub exprs: Vec<Expr>,
 }

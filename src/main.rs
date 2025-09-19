@@ -15,7 +15,7 @@ fn main() {
     let block = parser.parse().unwrap();
     println!("Parse took {:?}", start.elapsed());
     let e = parser::Expr::Block(block);
-    // parser::util::display(e);
+    parser::util::display(&e);
     let start = Instant::now();
     let mut analysis = compiler::Analyzer::new();
     analysis.analyze(e);

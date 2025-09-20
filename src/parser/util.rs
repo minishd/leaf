@@ -60,12 +60,16 @@ fn fmt_expr(e: &Expr, depth: usize) -> String {
             }
             result
         }
-        Expr::Func(a, e) => format!(
-            "(func({}) ({}))",
+        Expr::Func(a, e, func_meta) => format!(
+            "(func({}){} ({}))",
             a.iter()
                 .map(|e| fmt_expr(e, depth))
                 .collect::<Vec<_>>()
                 .join(", "),
+            func_meta
+                .as_ref()
+                .map(|fm| format!("@{}", fm.get()))
+                .unwrap_or_default(),
             fmt_expr(e, depth)
         ),
         Expr::Negate(l) => format!("(-{})", fmt_expr(l, depth)),

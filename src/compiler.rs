@@ -5,6 +5,8 @@ use crate::{
     parser::Expr,
 };
 
+pub type FuncMeta = Rc<Cell<bool>>;
+
 #[derive(Debug, Clone)]
 pub struct RefMeta {
     pub now: u16,
@@ -25,25 +27,28 @@ impl<'a> Scope<'a> {
     fn assigned(&mut self, id: Ident) {
         self.idents.push((id, Rc::default()));
     }
-    fn find(&self, id: &Ident) -> Rc<Cell<u16>> {
+    fn find(&self, id: &Ident) -> (Rc<Cell<u16>>, bool) {
         let mut cur = Some(self);
+        let mut went_up = false;
         while let Some(scope) = cur {
             let Some((_, count)) = scope.idents.iter().rev().find(|i| i.0 == *id) else {
                 cur = scope.parent;
+                went_up = true;
                 continue;
             };
-            return count.clone();
+            return (count.clone(), went_up);
         }
         panic!("undefined variable");
     }
 }
 
 pub fn compile(e: &mut Expr) {
+    let fm = FuncMeta::default();
     let mut scope = Scope::with_parent(None);
-    analyze(&mut scope, e);
+    analyze(&fm, &mut scope, e);
 }
 
-fn analyze(scope: &mut Scope, e: &mut Expr) {
+fn analyze(fm: &FuncMeta, scope: &mut Scope, e: &mut Expr) {
     match e {
         Expr::Assign(a, b) => {
             let Expr::Literal(Literal::Ident(id, _)) = &**a else {
@@ -54,11 +59,11 @@ fn analyze(scope: &mut Scope, e: &mut Expr) {
             scope.assigned(id.clone());
 
             // analyse the value
-            analyze(scope, b);
+            analyze(fm, scope, b);
         }
         Expr::Literal(Literal::Ident(id, ref_meta)) => {
             // lookup literal
-            let count = scope.find(id);
+            let (count, went_up) = scope.find(id);
             // increment # of uses
             count.update(|c| c + 1);
             // set ref meta
@@ -66,6 +71,10 @@ fn analyze(scope: &mut Scope, e: &mut Expr) {
                 now: count.get(),
                 total: count,
             });
+            // if we used something external to this scope, note it
+            if went_up {
+                fm.set(true);
+            }
         }
         // ignore
         Expr::Literal(_) => {}
@@ -75,10 +84,13 @@ fn analyze(scope: &mut Scope, e: &mut Expr) {
             let mut scope = Scope::with_parent(Some(scope));
             // analyze the contents in the new scope
             for e in &mut a.exprs {
-                analyze(&mut scope, e);
+                analyze(fm, &mut scope, e);
             }
         }
-        Expr::Func(a, b) => {
+        Expr::Func(a, b, func_meta) => {
+            // new function new context
+            let fm = FuncMeta::default();
+            *func_meta = Some(fm.clone());
             // functions have their own scope, because they have args
             let mut scope = Scope::with_parent(Some(scope));
 
@@ -91,22 +103,22 @@ fn analyze(scope: &mut Scope, e: &mut Expr) {
             }
 
             // now analyze the body in the new scope
-            analyze(&mut scope, b);
+            analyze(&fm, &mut scope, b);
         }
         Expr::If(a, b, c) => {
-            analyze(scope, a);
-            analyze(scope, b);
+            analyze(fm, scope, a);
+            analyze(fm, scope, b);
             if let Some(c) = c {
-                analyze(scope, c);
+                analyze(fm, scope, c);
             }
         }
         Expr::Call(a, b) => {
-            analyze(scope, a);
+            analyze(fm, scope, a);
             for e in b {
-                analyze(scope, e);
+                analyze(fm, scope, e);
             }
         }
-        Expr::Return(a) | Expr::Negate(a) | Expr::Not(a) => analyze(scope, a),
+        Expr::Return(a) | Expr::Negate(a) | Expr::Not(a) => analyze(fm, scope, a),
         Expr::EqualTo(a, b)
         | Expr::NotEqualTo(a, b)
         | Expr::And(a, b)
@@ -125,8 +137,8 @@ fn analyze(scope: &mut Scope, e: &mut Expr) {
         | Expr::SubtractAssign(a, b)
         | Expr::MultiplyAssign(a, b)
         | Expr::DivideAssign(a, b) => {
-            analyze(scope, a);
-            analyze(scope, b);
+            analyze(fm, scope, a);
+            analyze(fm, scope, b);
         }
     }
 }

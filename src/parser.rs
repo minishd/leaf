@@ -1,20 +1,21 @@
 use std::{fmt, iter::Peekable};
 
 use crate::{
+    compiler::FuncMeta,
     kind::Kind,
     lexer::{Associativity, LexError, Literal, Precedence, Token, TokenKind},
 };
 
 pub mod util;
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub enum Expr {
     // Data and variables
     Assign(Box<Expr>, Box<Expr>),
     Literal(Literal),
     // Non-literal datatypes
     Block(Block),
-    Func(Vec<Expr>, Box<Expr>),
+    Func(Vec<Expr>, Box<Expr>, Option<FuncMeta>),
     // Control flow
     If(Box<Expr>, Box<Expr>, Option<Box<Expr>>),
     Return(Box<Expr>),
@@ -46,7 +47,7 @@ pub enum Expr {
     DivideAssign(Box<Expr>, Box<Expr>),
 }
 
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Default)]
 pub struct Block {
     pub exprs: Vec<Expr>,
 }
@@ -154,7 +155,7 @@ where
                         // parse body
                         let body = self.parse_expr(prec, in_group)?;
                         // pack
-                        Box::new(Expr::Func(args, body))
+                        Box::new(Expr::Func(args, body, None))
                     }
                     // parse if
                     Token::If => {

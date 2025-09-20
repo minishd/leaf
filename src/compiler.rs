@@ -14,6 +14,7 @@ pub struct RefMeta {
 }
 
 struct Scope<'a> {
+    /* Faster than a hashmap for now? */
     idents: Vec<(Ident, Rc<Cell<u16>>)>,
     parent: Option<&'a Scope<'a>>,
 }
@@ -27,16 +28,16 @@ impl<'a> Scope<'a> {
     fn assigned(&mut self, id: Ident) {
         self.idents.push((id, Rc::default()));
     }
-    fn find(&self, id: &Ident) -> (Rc<Cell<u16>>, bool) {
+    fn find(&self, id: &Ident) -> (Rc<Cell<u16>>, u8) {
         let mut cur = Some(self);
-        let mut went_up = false;
+        let mut up_levels = 0;
         while let Some(scope) = cur {
             let Some((_, count)) = scope.idents.iter().rev().find(|i| i.0 == *id) else {
                 cur = scope.parent;
-                went_up = true;
+                up_levels += 1;
                 continue;
             };
-            return (count.clone(), went_up);
+            return (count.clone(), up_levels);
         }
         panic!("undefined variable");
     }
@@ -46,6 +47,50 @@ pub fn compile(e: &mut Expr) {
     let fm = FuncMeta::default();
     let mut scope = Scope::with_parent(None);
     analyze(&fm, &mut scope, e);
+}
+
+/* 5b up levels, 8b offset */
+struct Stkval(u8, u8);
+/* 3b type tag */
+enum Val {
+    Stack(Stkval),
+    /* u16 len, LEN data */
+    String(String),
+    /* 1b returnability, insts */
+    Func(bool, Vec<Inst>),
+    /* 1b value */
+    Bool(bool),
+    /* i64 data */
+    Int64(i64),
+    /* f64 data */
+    Float64(f64),
+    /* ... */
+    Nil,
+}
+enum Inst {
+    /* ... */
+    Copy(Val),
+    /* pop a1? ; pop a2? */
+    Eq(bool, bool, Val, Val),
+    Gt(bool, bool, Val, Val),
+    /* is conditional? ; what condition? ; pop result? */
+    Call(bool, bool, bool, Val),
+    /* pop a1? ; pop a2 */
+    Add(bool, bool, Val, Val),
+    Mul(bool, bool, Val, Val),
+    Div(bool, bool, Val, Val),
+    Mod(bool, bool, Val, Val),
+    Pow(bool, bool, Val, Val),
+    And(bool, bool, Val, Val),
+    Or(bool, bool, Val, Val),
+    /* pop a1? */
+    Not(bool, Val),
+    /* ... */
+    Pop(Stkval),
+    /* pop a2? */
+    Write(bool, Stkval, Val),
+    /* ... */
+    Return(Val),
 }
 
 fn analyze(fm: &FuncMeta, scope: &mut Scope, e: &mut Expr) {
@@ -63,7 +108,7 @@ fn analyze(fm: &FuncMeta, scope: &mut Scope, e: &mut Expr) {
         }
         Expr::Literal(Literal::Ident(id, ref_meta)) => {
             // lookup literal
-            let (count, went_up) = scope.find(id);
+            let (count, up_levels) = scope.find(id);
             // increment # of uses
             count.update(|c| c + 1);
             // set ref meta
@@ -72,7 +117,7 @@ fn analyze(fm: &FuncMeta, scope: &mut Scope, e: &mut Expr) {
                 total: count,
             });
             // if we used something external to this scope, note it
-            if went_up {
+            if up_levels != 0 {
                 fm.set(true);
             }
         }

@@ -166,6 +166,7 @@ where
     chars: Peekable<I>,
 }
 
+#[allow(clippy::unnecessary_wraps)]
 fn t(tk: Token) -> Option<Result<Token>> {
     Some(Ok(tk))
 }
@@ -203,6 +204,7 @@ where
     fn eat(&mut self) {
         self.next();
     }
+    #[allow(clippy::unnecessary_wraps)]
     fn eat_to(&mut self, tk: Token) -> Option<Result<Token>> {
         self.eat();
         Some(Ok(tk))
@@ -236,7 +238,7 @@ where
             "true" => Token::Literal(Literal::Boolean(true)),
             "false" => Token::Literal(Literal::Boolean(false)),
             "nil" => Token::Literal(Literal::Nil),
-            _ => Token::Literal(Literal::Ident(Ident(word), Default::default())),
+            _ => Token::Literal(Literal::Ident(Ident(word), Option::default())),
         }
     }
 

@@ -28,7 +28,7 @@ fn fmt_expr(e: &Expr, depth: usize) -> String {
             let mut result = fmt_expr(l, depth);
             result.push('(');
             let len = r.len();
-            for (i, e) in r.into_iter().enumerate() {
+            for (i, e) in r.iter().enumerate() {
                 result.push_str(&fmt_expr(e, depth));
                 if i + 1 != len {
                     result.push_str(", ");
@@ -62,7 +62,7 @@ fn fmt_expr(e: &Expr, depth: usize) -> String {
         }
         Expr::Func(a, e) => format!(
             "(func({}) ({}))",
-            a.into_iter()
+            a.iter()
                 .map(|e| fmt_expr(e, depth))
                 .collect::<Vec<_>>()
                 .join(", "),

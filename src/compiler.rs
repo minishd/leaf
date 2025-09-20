@@ -23,7 +23,7 @@ impl<'a> Scope<'a> {
         }
     }
     fn assigned(&mut self, id: Ident) {
-        self.idents.push((id, Default::default()));
+        self.idents.push((id, Rc::default()));
     }
     fn find(&self, id: &Ident) -> Rc<Cell<u16>> {
         let mut cur = Some(self);

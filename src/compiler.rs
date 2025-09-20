@@ -19,6 +19,17 @@ impl<'a> Scope<'a> {
     fn assigned(&mut self, id: Ident) {
         self.idents.push((id, Cell::default()));
     }
+    fn find(&self, id: &Ident) -> &Cell<u16> {
+        let mut cur = Some(self);
+        while let Some(scope) = cur {
+            let Some((_, count)) = scope.idents.iter().rev().find(|i| i.0 == *id) else {
+                cur = scope.parent;
+                continue;
+            };
+            return count;
+        }
+        panic!("undefined variable");
+    }
 }
 
 pub fn compile(mut e: Expr) {
@@ -41,31 +52,19 @@ fn analyze(scope: &mut Scope, e: &mut Expr) {
         }
         Expr::Literal(Literal::Ident(id), _) => {
             // lookup literal
-            let mut cur = &*scope;
-            loop {
-                let Some((_, count)) = cur.idents.iter().find(|i| i.0 == *id) else {
-                    if let Some(parent) = cur.parent {
-                        cur = parent;
-                    } else {
-                        panic!("undefined variable");
-                    }
-                    continue;
-                };
-                count.update(|c| c + 1);
-                let count = count.get();
-                println!("ref {id} #{count}");
-                break;
-            }
+            let count = scope.find(id);
+            count.update(|c| c + 1);
+            println!("ref {id} #{}", count.get());
         }
         // ignore
         Expr::Literal(_, _) => {}
         // for recursion..
         Expr::Block(a) => {
             // blocks have their own scope
-            let mut scope2 = Scope::with_parent(Some(scope));
+            let mut scope = Scope::with_parent(Some(scope));
             // analyze the contents in the new scope
             for e in &mut a.exprs {
-                analyze(&mut scope2, e);
+                analyze(&mut scope, e);
             }
         }
         Expr::Func(a, b) => {

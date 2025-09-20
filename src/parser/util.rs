@@ -23,7 +23,7 @@ fn fmt_expr(e: &Expr, depth: usize) -> String {
         Expr::SubtractAssign(l, r) => fmt_binop(l, r, "-=", depth),
         Expr::MultiplyAssign(l, r) => fmt_binop(l, r, "*=", depth),
         Expr::DivideAssign(l, r) => fmt_binop(l, r, "/=", depth),
-        Expr::Literal(l) => l.to_string(),
+        Expr::Literal(l, _) => l.to_string(),
         Expr::Call(l, r) => {
             let mut result = fmt_expr(l, depth);
             result.push('(');

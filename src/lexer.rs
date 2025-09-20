@@ -30,7 +30,14 @@ impl fmt::Display for Literal {
             Literal::Integer(n) => write!(f, "{n}"),
             Literal::Float(n) => write!(f, "{n}"),
             Literal::Boolean(b) => write!(f, "{b}"),
-            Literal::Ident(id, _) => write!(f, "{id}"),
+            Literal::Ident(id, ref_meta) => write!(
+                f,
+                "{id}{}",
+                ref_meta
+                    .as_ref()
+                    .map(|rm| format!("@{}/{}", rm.now, rm.total.get()))
+                    .unwrap_or_default()
+            ),
             Literal::Nil => write!(f, "nil"),
         }
     }

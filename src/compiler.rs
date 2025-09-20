@@ -7,8 +7,8 @@ use crate::{
 
 #[derive(Debug, Clone)]
 pub struct RefMeta {
-    now: u16,
-    total: Rc<Cell<u16>>,
+    pub now: u16,
+    pub total: Rc<Cell<u16>>,
 }
 
 struct Scope<'a> {
@@ -38,10 +38,9 @@ impl<'a> Scope<'a> {
     }
 }
 
-pub fn compile(mut e: Expr) {
+pub fn compile(e: &mut Expr) {
     let mut scope = Scope::with_parent(None);
-    analyze(&mut scope, &mut e);
-    println!("{e:?}");
+    analyze(&mut scope, e);
 }
 
 fn analyze(scope: &mut Scope, e: &mut Expr) {
@@ -63,12 +62,10 @@ fn analyze(scope: &mut Scope, e: &mut Expr) {
             // increment # of uses
             count.update(|c| c + 1);
             // set ref meta
-            let now = count.get();
             *ref_meta = Some(RefMeta {
                 now: count.get(),
                 total: count,
             });
-            println!("ref {id} #{now}");
         }
         // ignore
         Expr::Literal(_) => {}

@@ -16,11 +16,12 @@ fn main() {
     let block = parser.parse().unwrap();
     println!("Parse took {:?}", start.elapsed());
 
-    let e = parser::Expr::Block(block);
+    let mut e = parser::Expr::Block(block);
     parser::util::display(&e);
 
     let start = Instant::now();
-    compiler::compile(e);
+    compiler::compile(&mut e);
 
     println!("Analysis took {:?}", start.elapsed());
+    parser::util::display(&e);
 }

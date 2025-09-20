@@ -4,7 +4,7 @@ use std::{
     num::{ParseFloatError, ParseIntError},
 };
 
-use crate::kinds;
+use crate::{compiler::RefMeta, kinds};
 
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub struct Ident(String);
@@ -21,7 +21,7 @@ pub enum Literal {
     Float(f64),
     Boolean(bool),
     Nil,
-    Ident(Ident),
+    Ident(Ident, Option<RefMeta>),
 }
 impl fmt::Display for Literal {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -30,7 +30,7 @@ impl fmt::Display for Literal {
             Literal::Integer(n) => write!(f, "{n}"),
             Literal::Float(n) => write!(f, "{n}"),
             Literal::Boolean(b) => write!(f, "{b}"),
-            Literal::Ident(id) => write!(f, "{id}"),
+            Literal::Ident(id, _) => write!(f, "{id}"),
             Literal::Nil => write!(f, "nil"),
         }
     }
@@ -229,7 +229,7 @@ where
             "true" => Token::Literal(Literal::Boolean(true)),
             "false" => Token::Literal(Literal::Boolean(false)),
             "nil" => Token::Literal(Literal::Nil),
-            _ => Token::Literal(Literal::Ident(Ident(word))),
+            _ => Token::Literal(Literal::Ident(Ident(word), Default::default())),
         }
     }
 

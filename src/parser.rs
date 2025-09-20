@@ -11,7 +11,7 @@ pub mod util;
 pub enum Expr {
     // Data and variables
     Assign(Box<Expr>, Box<Expr>),
-    Literal(Literal, u16),
+    Literal(Literal),
     // Non-literal datatypes
     Block(Block),
     Func(Vec<Expr>, Box<Expr>),
@@ -122,7 +122,7 @@ where
     fn parse_expr(&mut self, min_prec: Precedence, in_group: bool) -> Result<Box<Expr>> {
         let mut lhs = match self.try_next()? {
             // literal
-            Token::Literal(lit) => Box::new(Expr::Literal(lit, 0)),
+            Token::Literal(lit) => Box::new(Expr::Literal(lit)),
 
             // start of group
             Token::ParenOpen => {

@@ -162,12 +162,12 @@ where
                         // parse the condition
                         let cond = self.parse_expr(Precedence::Min, false)?;
                         // parse the true case
-                        let true_case = self.parse_expr(prec, in_group)?;
+                        let true_case = self.parse_expr(Precedence::Min, in_group)?;
                         // and maybe a false case
                         let false_case = matches!(self.try_peek(), Ok(Token::Else))
                             .then(|| {
                                 self.eat();
-                                self.parse_expr(prec, in_group)
+                                self.parse_expr(Precedence::Min, in_group)
                             })
                             .transpose()?;
                         // pack

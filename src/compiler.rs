@@ -5,17 +5,9 @@ use crate::{
     parser::Expr,
 };
 
-pub type FuncMeta = Rc<Cell<bool>>;
-
-#[derive(Debug, Clone)]
-pub struct RefMeta {
-    pub now: u16,
-    pub total: Rc<Cell<u16>>,
-}
-
 struct Scope<'a> {
     /* Faster than a hashmap for now? */
-    idents: Vec<(Ident, Rc<Cell<u16>>)>,
+    idents: Vec<(Ident, Rc<RefMeta>)>,
     parent: Option<&'a Scope<'a>>,
 }
 impl<'a> Scope<'a> {
@@ -26,31 +18,152 @@ impl<'a> Scope<'a> {
         }
     }
     fn assigned(&mut self, id: Ident) {
-        self.idents.push((id, Rc::default()));
+        if self.find(&id).is_none() {
+            self.idents.push((id, Rc::default()));
+        }
     }
-    fn find(&self, id: &Ident) -> (Rc<Cell<u16>>, u8) {
+    fn find(&self, id: &Ident) -> Option<(Rc<RefMeta>, bool)> {
         let mut cur = Some(self);
-        let mut up_levels = 0;
+        let mut is_up = false;
+
         while let Some(scope) = cur {
-            let Some((_, count)) = scope.idents.iter().rev().find(|i| i.0 == *id) else {
+            let Some((_, fs)) = scope.idents.iter().rev().find(|i| i.0 == *id) else {
                 cur = scope.parent;
-                up_levels += 1;
+                is_up = true;
                 continue;
             };
-            return (count.clone(), up_levels);
+            return Some((fs.clone(), is_up));
         }
-        panic!("undefined variable");
+
+        None
     }
 }
 
-pub fn compile(e: &mut Expr) {
-    let fm = FuncMeta::default();
-    let mut scope = Scope::with_parent(None);
-    analyze(&fm, &mut scope, e);
+#[derive(Debug, Default, Clone)]
+pub struct FuncMeta {
+    pub is_unreturnable: Cell<bool>,
+}
+pub type FuncStat = Rc<FuncMeta>;
+
+#[derive(Debug, Clone)]
+pub struct RefStat {
+    pub now: u16,
+    pub stat: Rc<RefMeta>,
 }
 
-/* 5b up levels, 8b offset */
-struct Stkval(u8, u8);
+#[derive(Debug, Default)]
+pub struct RefMeta {
+    pub total: Cell<u16>,
+    pub is_shared: Cell<bool>,
+}
+
+fn analyze(fs: &FuncStat, scope: &mut Scope, e: &mut Expr) {
+    match e {
+        Expr::Assign(a, b) => {
+            let Expr::Literal(Literal::Ident(id, _)) = &**a else {
+                panic!("invalid assignment");
+            };
+
+            // add to scope
+            scope.assigned(id.clone());
+
+            // analyse the value
+            analyze(fs, scope, b);
+        }
+        Expr::Literal(Literal::Ident(id, ref_stat)) => {
+            // lookup literal
+            let Some((rs, used_up)) = scope.find(id) else {
+                panic!("unfound variable")
+            };
+            // increment # of uses
+            rs.total.update(|c| c + 1);
+            // set ref meta
+            *ref_stat = Some(RefStat {
+                now: rs.total.get(),
+                stat: rs.clone(),
+            });
+            // if we used something external to this scope, note it
+            if used_up {
+                fs.is_unreturnable.set(true);
+                rs.is_shared.set(true);
+            }
+        }
+        // ignore
+        Expr::Literal(_) => {}
+        // for recursion..
+        Expr::Block(a) => {
+            // blocks have their own scope
+            let mut scope = Scope::with_parent(Some(scope));
+            // analyze the contents in the new scope
+            for e in &mut a.exprs {
+                analyze(fs, &mut scope, e);
+            }
+        }
+        Expr::Func(a, b, func_stat) => {
+            // new function new context
+            let fs = FuncStat::default();
+            *func_stat = Some(fs.clone());
+            // functions have their own scope, because they have args
+            let mut scope = Scope::with_parent(Some(scope));
+
+            // init args
+            for e in a {
+                let Expr::Literal(Literal::Ident(id, _)) = e else {
+                    panic!("invalid arg def");
+                };
+                scope.assigned(id.clone());
+            }
+
+            // now analyze the body in the new scope
+            analyze(&fs, &mut scope, b);
+        }
+        Expr::If(a, b, c) => {
+            analyze(fs, scope, a);
+            analyze(fs, scope, b);
+            if let Some(c) = c {
+                analyze(fs, scope, c);
+            }
+        }
+        Expr::Call(a, b) => {
+            analyze(fs, scope, a);
+            for e in b {
+                analyze(fs, scope, e);
+            }
+        }
+        Expr::Return(a) | Expr::Negate(a) | Expr::Not(a) => analyze(fs, scope, a),
+        Expr::EqualTo(a, b)
+        | Expr::NotEqualTo(a, b)
+        | Expr::And(a, b)
+        | Expr::Or(a, b)
+        | Expr::LessThan(a, b)
+        | Expr::LessThanOrEqualTo(a, b)
+        | Expr::GreaterThan(a, b)
+        | Expr::GreaterThanOrEqualTo(a, b)
+        | Expr::Add(a, b)
+        | Expr::Subtract(a, b)
+        | Expr::Multiply(a, b)
+        | Expr::Divide(a, b)
+        | Expr::Exponent(a, b)
+        | Expr::Modulo(a, b)
+        | Expr::AddAssign(a, b) // maybe handle these differently?
+        | Expr::SubtractAssign(a, b) // when error handling is added at least
+        | Expr::MultiplyAssign(a, b)
+        | Expr::DivideAssign(a, b) =>{
+            analyze(fs, scope, a);
+            analyze(fs, scope, b);
+        }
+    }
+}
+
+// --- translate pass --- //
+
+/* 1b is up? */
+enum Stkval {
+    /* 4b blank ; 8b offset */
+    Local(u8),
+    /* 4b up levels ; 8b offset */
+    Foreign(u8),
+}
 /* 3b type tag */
 enum Val {
     Stack(Stkval),
@@ -93,97 +206,61 @@ enum Inst {
     Return(Val),
 }
 
-fn analyze(fm: &FuncMeta, scope: &mut Scope, e: &mut Expr) {
-    match e {
-        Expr::Assign(a, b) => {
-            let Expr::Literal(Literal::Ident(id, _)) = &**a else {
-                panic!("invalid assignment");
-            };
+/// Value on fake stack.
+enum FSValue {
+    Var(Ident),
+    Any,
+}
 
-            // add to scope
-            scope.assigned(id.clone());
+/// Build scope of a block.
+///
+/// Keeps track of where on the stack a block started,
+/// so it can all be cleared once the block is left
+struct BlockBuild {}
 
-            // analyse the value
-            analyze(fm, scope, b);
-        }
-        Expr::Literal(Literal::Ident(id, ref_meta)) => {
-            // lookup literal
-            let (count, up_levels) = scope.find(id);
-            // increment # of uses
-            count.update(|c| c + 1);
-            // set ref meta
-            *ref_meta = Some(RefMeta {
-                now: count.get(),
-                total: count,
-            });
-            // if we used something external to this scope, note it
-            if up_levels != 0 {
-                fm.set(true);
-            }
-        }
-        // ignore
-        Expr::Literal(_) => {}
-        // for recursion..
-        Expr::Block(a) => {
-            // blocks have their own scope
-            let mut scope = Scope::with_parent(Some(scope));
-            // analyze the contents in the new scope
-            for e in &mut a.exprs {
-                analyze(fm, &mut scope, e);
-            }
-        }
-        Expr::Func(a, b, func_meta) => {
-            // new function new context
-            let fm = FuncMeta::default();
-            *func_meta = Some(fm.clone());
-            // functions have their own scope, because they have args
-            let mut scope = Scope::with_parent(Some(scope));
+/// Build scope of a function.
+///
+/// * Starts with a base block scope that includes any arguments passed
+/// * Contains the compiled instructions of all blocks inside it
+/// * Keeps track of its own shared stack (contains vars that higher functions access)
+/// * Keeps track of its own local stack (vars only used locally)
+struct FuncBuild<'a> {
+    parent: &'a FuncBuild<'a>,
+    insts: Vec<Inst>,
+    shared_stack: Vec<FSValue>,
+    local_stack: Vec<FSValue>,
+}
 
-            // init args
-            for e in a {
-                let Expr::Literal(Literal::Ident(id, _)) = e else {
-                    panic!("invalid arg def");
-                };
-                scope.assigned(id.clone());
-            }
+impl<'a> FuncBuild<'a> {
+    fn local_find(&mut self, id: Ident) -> Stkval {
+        let idx = if let Some((idx, _)) = self
+            .local_stack
+            .iter()
+            .enumerate()
+            .rev()
+            .find(|(_, v)| matches!(v, FSValue::Var(x) if *x == id))
+        {
+            idx
+        } else {
+            let idx = self.local_stack.len();
+            self.local_stack.push(FSValue::Var(id));
+            idx
+        };
 
-            // now analyze the body in the new scope
-            analyze(&fm, &mut scope, b);
-        }
-        Expr::If(a, b, c) => {
-            analyze(fm, scope, a);
-            analyze(fm, scope, b);
-            if let Some(c) = c {
-                analyze(fm, scope, c);
-            }
-        }
-        Expr::Call(a, b) => {
-            analyze(fm, scope, a);
-            for e in b {
-                analyze(fm, scope, e);
-            }
-        }
-        Expr::Return(a) | Expr::Negate(a) | Expr::Not(a) => analyze(fm, scope, a),
-        Expr::EqualTo(a, b)
-        | Expr::NotEqualTo(a, b)
-        | Expr::And(a, b)
-        | Expr::Or(a, b)
-        | Expr::LessThan(a, b)
-        | Expr::LessThanOrEqualTo(a, b)
-        | Expr::GreaterThan(a, b)
-        | Expr::GreaterThanOrEqualTo(a, b)
-        | Expr::Add(a, b)
-        | Expr::Subtract(a, b)
-        | Expr::Multiply(a, b)
-        | Expr::Divide(a, b)
-        | Expr::Exponent(a, b)
-        | Expr::Modulo(a, b)
-        | Expr::AddAssign(a, b)
-        | Expr::SubtractAssign(a, b)
-        | Expr::MultiplyAssign(a, b)
-        | Expr::DivideAssign(a, b) => {
-            analyze(fm, scope, a);
-            analyze(fm, scope, b);
+        Stkval::Local(idx as u8)
+    }
+
+    fn translate(&mut self, e: &Expr) {
+        match e {
+            _ => unimplemented!(),
         }
     }
+}
+
+pub fn compile(e: &mut Expr) {
+    let fs = FuncStat::default();
+    let mut scope = Scope::with_parent(None);
+    analyze(&fs, &mut scope, e);
+    // let mut fg = FuncGen::default();
+    // fg.translate(&e);
 }

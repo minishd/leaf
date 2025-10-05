@@ -4,7 +4,7 @@ use std::{
     num::{ParseFloatError, ParseIntError},
 };
 
-use crate::{compiler::RefMeta, kinds};
+use crate::{compiler::RefStat, kinds};
 
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub struct Ident(String);
@@ -21,7 +21,7 @@ pub enum Literal {
     Float(f64),
     Boolean(bool),
     Nil,
-    Ident(Ident, Option<RefMeta>),
+    Ident(Ident, Option<RefStat>),
 }
 impl fmt::Display for Literal {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -30,12 +30,17 @@ impl fmt::Display for Literal {
             Literal::Integer(n) => write!(f, "{n}"),
             Literal::Float(n) => write!(f, "{n}"),
             Literal::Boolean(b) => write!(f, "{b}"),
-            Literal::Ident(id, ref_meta) => write!(
+            Literal::Ident(id, ref_stat) => write!(
                 f,
                 "{id}{}",
-                ref_meta
+                ref_stat
                     .as_ref()
-                    .map(|rm| format!("@{}/{}", rm.now, rm.total.get()))
+                    .map(|rs| format!(
+                        "@{}{}/{}",
+                        rs.stat.is_shared.get().then_some("sh+").unwrap_or(""),
+                        rs.now,
+                        rs.stat.total.get()
+                    ))
                     .unwrap_or_default()
             ),
             Literal::Nil => write!(f, "nil"),

@@ -1,7 +1,7 @@
 use std::{fmt, iter::Peekable};
 
 use crate::{
-    compiler::FuncMeta,
+    compiler::FuncStat,
     kind::Kind,
     lexer::{Associativity, LexError, Literal, Precedence, Token, TokenKind},
 };
@@ -15,7 +15,7 @@ pub enum Expr {
     Literal(Literal),
     // Non-literal datatypes
     Block(Block),
-    Func(Vec<Expr>, Box<Expr>, Option<FuncMeta>),
+    Func(Vec<Expr>, Box<Expr>, Option<FuncStat>),
     // Control flow
     If(Box<Expr>, Box<Expr>, Option<Box<Expr>>),
     Return(Box<Expr>),

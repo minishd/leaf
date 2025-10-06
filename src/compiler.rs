@@ -39,10 +39,13 @@ impl<'a> Stack<'a> for Scope<'a> {
     }
 }
 impl Scope<'_> {
-    fn assigned(&mut self, id: Ident) {
-        if self.find(&id).is_none() {
-            self.push((id, Rc::default()));
-        }
+    fn assigned(&mut self, id: Ident) -> Rc<RefMeta> {
+        let Some((rm, _)) = self.find(&id) else {
+            let rm: Rc<RefMeta> = Rc::default();
+            self.push((id, rm.clone()));
+            return rm;
+        };
+        rm
     }
 }
 
@@ -55,7 +58,7 @@ pub type FuncStat = Rc<FuncMeta>;
 #[derive(Debug, Clone)]
 pub struct RefStat {
     pub now: u16,
-    pub stat: Rc<RefMeta>,
+    pub meta: Rc<RefMeta>,
 }
 
 #[derive(Debug, Default)]
@@ -67,32 +70,35 @@ pub struct RefMeta {
 fn analyze(fs: &FuncStat, scope: &mut Scope, e: &mut Expr) {
     match e {
         Expr::Assign(a, b) => {
-            let Expr::Literal(Literal::Ident(id, _)) = &**a else {
+            let Expr::Literal(Literal::Ident(id, ref_stat)) = &mut **a else {
                 panic!("invalid assignment");
             };
 
             // add to scope
-            scope.assigned(id.clone());
+            let rm = scope.assigned(id.clone());
+
+            // add ref stat
+            *ref_stat = Some(RefStat { now: rm.total.get(), meta: rm });
 
             // analyse the value
             analyze(fs, scope, b);
         }
         Expr::Literal(Literal::Ident(id, ref_stat)) => {
             // lookup literal
-            let Some((rs, up_levels)) = scope.find(id) else {
+            let Some((rm, up_levels)) = scope.find(id) else {
                 panic!("unfound variable")
             };
             // increment # of uses
-            rs.total.update(|c| c + 1);
+            rm.total.update(|c| c + 1);
             // set ref meta
             *ref_stat = Some(RefStat {
-                now: rs.total.get(),
-                stat: rs.clone(),
+                now: rm.total.get(),
+                meta: rm.clone(),
             });
             // if we used something external to this scope, note it
             if up_levels != 0 {
                 fs.is_unreturnable.set(true);
-                rs.is_shared.set(true);
+                rm.is_shared.set(true);
             }
         }
         // ignore
@@ -165,15 +171,17 @@ fn analyze(fs: &FuncStat, scope: &mut Scope, e: &mut Expr) {
 // --- translate pass --- //
 
 /* 1b is up? */
-enum Stkval {
+#[derive(Debug, PartialEq, Eq)]
+pub enum Stkval {
     /* 4b blank ; 8b offset */
     Local(u8),
     /* 4b up levels ; 8b offset */
     Shared(u8, u8),
 }
 /* 3b type tag */
-enum Val {
-    Stack(Stkval),
+#[derive(Debug)]
+pub enum Val {
+    Stack(Stkval, bool),
     /* u16 len, LEN data */
     String(String),
     /* 1b returnability, 4b arity, insts */
@@ -188,7 +196,8 @@ enum Val {
     Nil,
 }
 /* 5b inst type */
-enum Inst {
+#[derive(Debug)]
+pub enum Inst {
     /* ... */
     Copy(Val),
     /* pop a1? ; pop a2? */
@@ -217,16 +226,11 @@ enum Inst {
 }
 
 /// Value on fake stack.
+#[derive(Debug)]
 enum FSValue {
     Var(Ident),
     Any,
 }
-
-/// Build scope of a block.
-///
-/// Keeps track of where on the stack a block started,
-/// so it can all be cleared once the block is left
-struct BlockBuild {}
 
 /// A stack that keeps track of values during translation.
 /// (Local or shared)
@@ -259,15 +263,6 @@ impl<'a> Stack<'a> for FakeStack<'a> {
         matches!(value, FSValue::Var(x) if x == input).then_some(index)
     }
 }
-impl FakeStack<'_> {
-    fn get(&mut self, id: Ident) -> (usize, u16) {
-        self.find(&id).unwrap_or_else(|| {
-            let i = self.values().len();
-            self.push(FSValue::Var(id));
-            (i, 0)
-        })
-    }
-}
 
 /// Build scope of a function.
 ///
@@ -297,8 +292,75 @@ impl<'a> FuncBuild<'a> {
         }
     }
 
-    fn translate(&mut self, bb: &mut BlockBuild, e: &Expr) {
+    fn find(&mut self, id: &Ident) -> Stkval {
+        self.shared
+            .find(id)
+            .map(|(count, up_levels)| Stkval::Shared(up_levels as u8, count as u8))
+            .or_else(|| self.local.find(id).map(|(c, _)| Stkval::Local(c as u8)))
+            .unwrap()
+    }
+
+    fn push_any(&mut self) -> Stkval {
+        // println!("PUSHING ANY TO {:?}", self.local.values());
+        let i = self.local.height();
+        self.local.push(FSValue::Any);
+        Stkval::Local(i as u8)
+    }
+
+    fn is_drop(&mut self, v: &Val) -> bool {
+        if let Val::Stack(Stkval::Local(i), true) = v {
+            self.local.pop(*i as usize);
+            true
+        } else {
+            false
+        }
+    }
+    fn is_drop2(&mut self, v1: &Val, v2: &Val) -> (bool, bool) {
+        (self.is_drop(v1), self.is_drop(v2))
+    }
+
+    fn translate(&mut self, e: Expr, unused: bool) -> Val {
+        // println!("{e:?}\n\n");
         match e {
+            /* organisational */
+            Expr::Block(mut b) => {
+                let last = b.exprs.pop();
+                for e in b.exprs {
+                    self.translate(e, false);
+                }
+                // yield last expr
+                last.map_or(Val::Nil, |e| self.translate(e, false))
+            }
+            /* 1 to 1 literals */
+            Expr::Literal(Literal::Boolean(b)) => Val::Bool(b),
+            Expr::Literal(Literal::Float(f)) => Val::Float64(f),
+            Expr::Literal(Literal::Integer(i)) => Val::Int64(i),
+            Expr::Literal(Literal::Nil) => Val::Nil,
+            Expr::Literal(Literal::String(s)) => Val::String(s),
+            /* ident */
+            Expr::Literal(Literal::Ident(id, Some(rs))) => {
+                Val::Stack(self.find(&id), rs.now == rs.meta.total.get())
+            }
+            /* math */
+            Expr::Add(l, r) => {
+                let (v1, v2) = (self.translate(*l, false), self.translate(*r, false));
+                let (a1, a2) = self.is_drop2(&v1, &v2);
+
+                self.insts.push(Inst::Add(a1, a2, v1, v2));
+                Val::Stack(self.push_any(), true)
+            }
+            Expr::Assign(l, r) => {
+                let Expr::Literal(Literal::Ident(id, Some(ref_stat))) = *l else {
+                    unreachable!()
+                };
+
+                let unused = ref_stat.now == ref_stat.meta.total.get();
+                let val = self.translate(*r, unused);
+                if !unused {
+                    self.local.push(FSValue::Var(id));
+                }
+                val
+            }
             _ => unimplemented!(),
         }
     }
@@ -310,9 +372,9 @@ pub fn analysis_demo(e: &mut Expr) {
     let mut scope = Scope::with_parent(None);
     analyze(&fs, &mut scope, e);
 }
-pub fn translation_demo(e: &Expr) {
+pub fn translation_demo(e: Expr) -> Vec<Inst> {
     // translation pass
     let mut fb = FuncBuild::new_root();
-    let mut bb = BlockBuild {};
-    fb.translate(&mut bb, e);
+    fb.translate(e, true);
+    fb.insts
 }

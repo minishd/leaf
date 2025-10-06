@@ -37,9 +37,9 @@ impl fmt::Display for Literal {
                     .as_ref()
                     .map(|rs| format!(
                         "@{}{}/{}",
-                        rs.stat.is_shared.get().then_some("sh+").unwrap_or(""),
+                        rs.meta.is_shared.get().then_some("sh+").unwrap_or(""),
                         rs.now,
-                        rs.stat.total.get()
+                        rs.meta.total.get()
                     ))
                     .unwrap_or_default()
             ),

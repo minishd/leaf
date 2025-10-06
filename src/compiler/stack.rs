@@ -17,6 +17,12 @@ where
     fn push(&mut self, value: Self::Value) {
         self.values_mut().push(value);
     }
+    fn pop(&mut self, index: usize) {
+        self.values_mut().remove(index);
+    }
+    fn height(&self) -> usize {
+        self.values().len()
+    }
 
     fn find(&self, input: &Self::Input) -> Option<(Self::Output, u16)> {
         let mut cur = Some(self);

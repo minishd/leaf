@@ -24,7 +24,9 @@ fn main() {
     parser::util::display(&e);
 
     let start = Instant::now();
-    compiler::translation_demo(&mut e);
+    let insts = compiler::translation_demo(e);
     println!("Translation took {:?}", start.elapsed());
-    parser::util::display(&e);
+    for i in insts {
+        println!("=> {i:?}");
+    }
 }

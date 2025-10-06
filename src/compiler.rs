@@ -5,37 +5,44 @@ use crate::{
     parser::Expr,
 };
 
+use stack::Stack;
+
+mod stack;
+
 struct Scope<'a> {
-    /* Faster than a hashmap for now? */
-    idents: Vec<(Ident, Rc<RefMeta>)>,
+    values: Vec<(Ident, Rc<RefMeta>)>,
     parent: Option<&'a Scope<'a>>,
 }
-impl<'a> Scope<'a> {
-    fn with_parent(parent: Option<&'a Scope>) -> Self {
-        Scope {
-            idents: Vec::new(),
+impl<'a> Stack<'a> for Scope<'a> {
+    type Value = (Ident, Rc<RefMeta>);
+    type Input = Ident;
+    type Output = Rc<RefMeta>;
+
+    fn with_parent(parent: Option<&'a Self>) -> Self {
+        Self {
+            values: Vec::new(),
             parent,
         }
     }
+    fn parent(&self) -> Option<&'a Self> {
+        self.parent
+    }
+    fn values(&self) -> &Vec<Self::Value> {
+        &self.values
+    }
+    fn values_mut(&mut self) -> &mut Vec<Self::Value> {
+        &mut self.values
+    }
+
+    fn find_map(_: usize, value: &Self::Value, input: &Self::Input) -> Option<Self::Output> {
+        (value.0 == *input).then_some(value.1.clone())
+    }
+}
+impl Scope<'_> {
     fn assigned(&mut self, id: Ident) {
         if self.find(&id).is_none() {
-            self.idents.push((id, Rc::default()));
+            self.push((id, Rc::default()));
         }
-    }
-    fn find(&self, id: &Ident) -> Option<(Rc<RefMeta>, bool)> {
-        let mut cur = Some(self);
-        let mut is_up = false;
-
-        while let Some(scope) = cur {
-            let Some((_, fs)) = scope.idents.iter().rev().find(|i| i.0 == *id) else {
-                cur = scope.parent;
-                is_up = true;
-                continue;
-            };
-            return Some((fs.clone(), is_up));
-        }
-
-        None
     }
 }
 
@@ -72,7 +79,7 @@ fn analyze(fs: &FuncStat, scope: &mut Scope, e: &mut Expr) {
         }
         Expr::Literal(Literal::Ident(id, ref_stat)) => {
             // lookup literal
-            let Some((rs, used_up)) = scope.find(id) else {
+            let Some((rs, up_levels)) = scope.find(id) else {
                 panic!("unfound variable")
             };
             // increment # of uses
@@ -83,7 +90,7 @@ fn analyze(fs: &FuncStat, scope: &mut Scope, e: &mut Expr) {
                 stat: rs.clone(),
             });
             // if we used something external to this scope, note it
-            if used_up {
+            if up_levels != 0 {
                 fs.is_unreturnable.set(true);
                 rs.is_shared.set(true);
             }
@@ -162,14 +169,14 @@ enum Stkval {
     /* 4b blank ; 8b offset */
     Local(u8),
     /* 4b up levels ; 8b offset */
-    Foreign(u8),
+    Shared(u8, u8),
 }
 /* 3b type tag */
 enum Val {
     Stack(Stkval),
     /* u16 len, LEN data */
     String(String),
-    /* 1b returnability, insts */
+    /* 1b returnability, 4b arity, insts */
     Func(bool, Vec<Inst>),
     /* 1b value */
     Bool(bool),
@@ -180,12 +187,15 @@ enum Val {
     /* ... */
     Nil,
 }
+/* 5b inst type */
 enum Inst {
     /* ... */
     Copy(Val),
     /* pop a1? ; pop a2? */
     Eq(bool, bool, Val, Val),
     Gt(bool, bool, Val, Val),
+    /* is conditional? ; what condition? */
+    Skip(bool, bool, i16),
     /* is conditional? ; what condition? ; pop result? */
     Call(bool, bool, bool, Val),
     /* pop a1? ; pop a2 */
@@ -218,6 +228,47 @@ enum FSValue {
 /// so it can all be cleared once the block is left
 struct BlockBuild {}
 
+/// A stack that keeps track of values during translation.
+/// (Local or shared)
+struct FakeStack<'a> {
+    values: Vec<FSValue>,
+    parent: Option<&'a FakeStack<'a>>,
+}
+impl<'a> Stack<'a> for FakeStack<'a> {
+    type Value = FSValue;
+    type Input = Ident;
+    type Output = usize;
+
+    fn with_parent(parent: Option<&'a Self>) -> Self {
+        Self {
+            values: Vec::new(),
+            parent,
+        }
+    }
+    fn parent(&self) -> Option<&'a Self> {
+        self.parent
+    }
+    fn values(&self) -> &Vec<Self::Value> {
+        &self.values
+    }
+    fn values_mut(&mut self) -> &mut Vec<Self::Value> {
+        &mut self.values
+    }
+
+    fn find_map(index: usize, value: &Self::Value, input: &Self::Input) -> Option<Self::Output> {
+        matches!(value, FSValue::Var(x) if x == input).then_some(index)
+    }
+}
+impl FakeStack<'_> {
+    fn get(&mut self, id: Ident) -> (usize, u16) {
+        self.find(&id).unwrap_or_else(|| {
+            let i = self.values().len();
+            self.push(FSValue::Var(id));
+            (i, 0)
+        })
+    }
+}
+
 /// Build scope of a function.
 ///
 /// * Starts with a base block scope that includes any arguments passed
@@ -225,32 +276,14 @@ struct BlockBuild {}
 /// * Keeps track of its own shared stack (contains vars that higher functions access)
 /// * Keeps track of its own local stack (vars only used locally)
 struct FuncBuild<'a> {
-    parent: &'a FuncBuild<'a>,
+    parent: Option<&'a FuncBuild<'a>>,
     insts: Vec<Inst>,
-    shared_stack: Vec<FSValue>,
-    local_stack: Vec<FSValue>,
+    shared: FakeStack<'a>,
+    local: FakeStack<'a>,
 }
 
-impl<'a> FuncBuild<'a> {
-    fn local_find(&mut self, id: Ident) -> Stkval {
-        let idx = if let Some((idx, _)) = self
-            .local_stack
-            .iter()
-            .enumerate()
-            .rev()
-            .find(|(_, v)| matches!(v, FSValue::Var(x) if *x == id))
-        {
-            idx
-        } else {
-            let idx = self.local_stack.len();
-            self.local_stack.push(FSValue::Var(id));
-            idx
-        };
-
-        Stkval::Local(idx as u8)
-    }
-
-    fn translate(&mut self, e: &Expr) {
+impl FuncBuild<'_> {
+    fn translate(&mut self, bb: &mut BlockBuild, e: &Expr) {
         match e {
             _ => unimplemented!(),
         }

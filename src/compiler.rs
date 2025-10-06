@@ -276,13 +276,27 @@ impl FakeStack<'_> {
 /// * Keeps track of its own shared stack (contains vars that higher functions access)
 /// * Keeps track of its own local stack (vars only used locally)
 struct FuncBuild<'a> {
-    parent: Option<&'a FuncBuild<'a>>,
     insts: Vec<Inst>,
     shared: FakeStack<'a>,
     local: FakeStack<'a>,
 }
 
-impl FuncBuild<'_> {
+impl<'a> FuncBuild<'a> {
+    fn new_root() -> Self {
+        FuncBuild {
+            insts: Vec::new(),
+            shared: FakeStack::with_parent(None),
+            local: FakeStack::with_parent(None),
+        }
+    }
+    fn with_parent(parent: &'a FuncBuild<'a>) -> Self {
+        FuncBuild {
+            insts: Vec::new(),
+            shared: FakeStack::with_parent(Some(&parent.shared)),
+            local: FakeStack::with_parent(None),
+        }
+    }
+
     fn translate(&mut self, bb: &mut BlockBuild, e: &Expr) {
         match e {
             _ => unimplemented!(),
@@ -290,10 +304,15 @@ impl FuncBuild<'_> {
     }
 }
 
-pub fn compile(e: &mut Expr) {
+pub fn analysis_demo(e: &mut Expr) {
+    // analysis pass
     let fs = FuncStat::default();
     let mut scope = Scope::with_parent(None);
     analyze(&fs, &mut scope, e);
-    // let mut fg = FuncGen::default();
-    // fg.translate(&e);
+}
+pub fn translation_demo(e: &Expr) {
+    // translation pass
+    let mut fb = FuncBuild::new_root();
+    let mut bb = BlockBuild {};
+    fb.translate(&mut bb, e);
 }

@@ -23,6 +23,9 @@ where
     fn height(&self) -> usize {
         self.values().len()
     }
+    fn swap_top(&mut self, new: Self::Value) {
+        *self.values_mut().last_mut().unwrap() = new;
+    }
 
     fn find(&self, input: &Self::Input) -> Option<(Self::Output, u16)> {
         let mut cur = Some(self);

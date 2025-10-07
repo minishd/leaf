@@ -301,7 +301,6 @@ impl<'a> FuncBuild<'a> {
     }
 
     fn push_any(&mut self) -> Stkval {
-        // println!("PUSHING ANY TO {:?}", self.local.values());
         let i = self.local.height();
         self.local.push(FSValue::Any);
         Stkval::Local(i as u8)
@@ -319,17 +318,17 @@ impl<'a> FuncBuild<'a> {
         (self.is_drop(v1), self.is_drop(v2))
     }
 
-    fn translate(&mut self, e: Expr, unused: bool) -> Val {
-        // println!("{e:?}\n\n");
-        match e {
+    fn translate(&mut self, e: Expr) -> Val {
+        // println!("{e:?}");
+        let outp = match e {
             /* organisational */
             Expr::Block(mut b) => {
                 let last = b.exprs.pop();
                 for e in b.exprs {
-                    self.translate(e, false);
+                    self.translate(e);
                 }
                 // yield last expr
-                last.map_or(Val::Nil, |e| self.translate(e, false))
+                last.map_or(Val::Nil, |e| self.translate(e))
             }
             /* 1 to 1 literals */
             Expr::Literal(Literal::Boolean(b)) => Val::Bool(b),
@@ -343,10 +342,100 @@ impl<'a> FuncBuild<'a> {
             }
             /* math */
             Expr::Add(l, r) => {
-                let (v1, v2) = (self.translate(*l, false), self.translate(*r, false));
+                let (v1, v2) = (self.translate(*l), self.translate(*r));
                 let (a1, a2) = self.is_drop2(&v1, &v2);
 
                 self.insts.push(Inst::Add(a1, a2, v1, v2));
+                Val::Stack(self.push_any(), true)
+            }
+            Expr::Multiply(l, r) => {
+                let (v1, v2) = (self.translate(*l), self.translate(*r));
+                let (a1, a2) = self.is_drop2(&v1, &v2);
+
+                self.insts.push(Inst::Mul(a1, a2, v1, v2));
+                Val::Stack(self.push_any(), true)
+            }
+            Expr::Divide(l, r) => {
+                let (v1, v2) = (self.translate(*l), self.translate(*r));
+                let (a1, a2) = self.is_drop2(&v1, &v2);
+
+                self.insts.push(Inst::Div(a1, a2, v1, v2));
+                Val::Stack(self.push_any(), true)
+            }
+            Expr::Modulo(l, r) => {
+                let (v1, v2) = (self.translate(*l), self.translate(*r));
+                let (a1, a2) = self.is_drop2(&v1, &v2);
+
+                self.insts.push(Inst::Mod(a1, a2, v1, v2));
+                Val::Stack(self.push_any(), true)
+            }
+            Expr::Exponent(l, r) => {
+                let (v1, v2) = (self.translate(*l), self.translate(*r));
+                let (a1, a2) = self.is_drop2(&v1, &v2);
+
+                self.insts.push(Inst::Pow(a1, a2, v1, v2));
+                Val::Stack(self.push_any(), true)
+            }
+            Expr::And(l, r) => {
+                let (v1, v2) = (self.translate(*l), self.translate(*r));
+                let (a1, a2) = self.is_drop2(&v1, &v2);
+
+                self.insts.push(Inst::And(a1, a2, v1, v2));
+                Val::Stack(self.push_any(), true)
+            }
+            Expr::Or(l, r) => {
+                let (v1, v2) = (self.translate(*l), self.translate(*r));
+                let (a1, a2) = self.is_drop2(&v1, &v2);
+
+                self.insts.push(Inst::Or(a1, a2, v1, v2));
+                Val::Stack(self.push_any(), true)
+            }
+            Expr::EqualTo(l, r) => {
+                let (v1, v2) = (self.translate(*l), self.translate(*r));
+                let (a1, a2) = self.is_drop2(&v1, &v2);
+
+                self.insts.push(Inst::Eq(a1, a2, v1, v2));
+                Val::Stack(self.push_any(), true)
+            }
+            Expr::NotEqualTo(l, r) => {
+                let (v1, v2) = (self.translate(*l), self.translate(Expr::Not(r)));
+                let (a1, a2) = self.is_drop2(&v1, &v2);
+
+                self.insts.push(Inst::Eq(a1, a2, v1, v2));
+                Val::Stack(self.push_any(), true)
+            }
+            Expr::GreaterThan(l, r) => {
+                let (v1, v2) = (self.translate(*l), self.translate(*r));
+                let (a1, a2) = self.is_drop2(&v1, &v2);
+
+                self.insts.push(Inst::Gt(a1, a2, v1, v2));
+                Val::Stack(self.push_any(), true)
+            }
+            Expr::LessThan(l, r) => {
+                let (v1, v2) = (self.translate(*l), self.translate(*r));
+                let (a1, a2) = self.is_drop2(&v1, &v2);
+
+                self.insts.push(Inst::Gt(a2, a1, v2, v1));
+                Val::Stack(self.push_any(), true)
+            }
+            Expr::Subtract(l, r) => {
+                let (v1, v2) = (
+                    self.translate(*l),
+                    self.translate(Expr::Multiply(
+                        r,
+                        Box::new(Expr::Literal(Literal::Integer(-1))),
+                    )),
+                );
+                let (a1, a2) = self.is_drop2(&v1, &v2);
+
+                self.insts.push(Inst::Add(a1, a2, v1, v2));
+                Val::Stack(self.push_any(), true)
+            }
+            Expr::Not(r) => {
+                let v1 = self.translate(*r);
+                let a1 = self.is_drop(&v1);
+
+                self.insts.push(Inst::Not(a1, v1));
                 Val::Stack(self.push_any(), true)
             }
             Expr::Assign(l, r) => {
@@ -354,15 +443,28 @@ impl<'a> FuncBuild<'a> {
                     unreachable!()
                 };
 
-                let unused = ref_stat.now == ref_stat.meta.total.get();
-                let val = self.translate(*r, unused);
-                if !unused {
-                    self.local.push(FSValue::Var(id));
+                let gets_used = ref_stat.now != ref_stat.meta.total.get();
+
+                match *r {
+                    Expr::Literal(lit) if gets_used => {
+                        let v1 = self.translate(Expr::Literal(lit));
+                        self.insts.push(Inst::Copy(v1));
+                        Val::Stack(self.push_any(), false)
+                    }
+                    Expr::Literal(lit) => self.translate(Expr::Literal(lit)),
+                    e => {
+                        let val = self.translate(e);
+                        // we know the top of the stack is the result
+                        // so lets keep track of that
+                        self.local.swap_top(FSValue::Var(id));
+                        val
+                    }
                 }
-                val
             }
             _ => unimplemented!(),
-        }
+        };
+        // println!("CHECK {:?} {:?}", self.insts.last(), self.local.values());
+        outp
     }
 }
 
@@ -375,6 +477,6 @@ pub fn analysis_demo(e: &mut Expr) {
 pub fn translation_demo(e: Expr) -> Vec<Inst> {
     // translation pass
     let mut fb = FuncBuild::new_root();
-    fb.translate(e, true);
+    fb.translate(e);
     fb.insts
 }

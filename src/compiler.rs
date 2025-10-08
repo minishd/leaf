@@ -203,6 +203,7 @@ pub enum Inst {
     /* pop a1? ; pop a2? */
     Eq(bool, bool, Val, Val),
     Gt(bool, bool, Val, Val),
+    GtEq(bool, bool, Val, Val),
     /* is conditional? ; what condition? */
     Skip(bool, bool, i16),
     /* is conditional? ; what condition? ; pop result? */
@@ -347,8 +348,7 @@ impl<'a> FuncBuild<'a> {
     }
 
     fn translate(&mut self, e: Expr) -> Val {
-        // println!("{e:?}");
-        let outp = match e {
+        match e {
             /* organisational */
             Expr::Block(mut b) => {
                 let last = b.exprs.pop();
@@ -358,12 +358,14 @@ impl<'a> FuncBuild<'a> {
                 // yield last expr
                 last.map_or(Val::Nil, |e| self.translate(e))
             }
+
             /* 1 to 1 literals */
             Expr::Literal(Literal::Boolean(b)) => Val::Bool(b),
             Expr::Literal(Literal::Float(f)) => Val::Float64(f),
             Expr::Literal(Literal::Integer(i)) => Val::Int64(i),
             Expr::Literal(Literal::Nil) => Val::Nil,
             Expr::Literal(Literal::String(s)) => Val::String(s),
+
             /* vars */
             Expr::Literal(Literal::Ident(id, Some(rs))) => {
                 Val::Stack(self.find(&id), rs.now == rs.meta.total.get())
@@ -438,27 +440,14 @@ impl<'a> FuncBuild<'a> {
             Expr::Or(l, r) => self.gen_binop(*l, *r, Inst::Or),
             Expr::EqualTo(l, r) => self.gen_binop(*l, *r, Inst::Eq),
             Expr::GreaterThan(l, r) => self.gen_binop(*l, *r, Inst::Gt),
+            Expr::GreaterThanOrEqualTo(l, r) => self.gen_binop(*l, *r, Inst::GtEq),
             Expr::Not(r) => self.gen_unop(*r, Inst::Not),
 
-            Expr::NotEqualTo(l, r) => {
-                let (v1, v2) = (self.translate(*l), self.translate(Expr::Not(r)));
-                let (a1, a2) = self.check_drop2(&v1, &v2);
+            Expr::NotEqualTo(l, r) => self.translate(Expr::Not(Box::new(Expr::EqualTo(l, r)))),
+            Expr::LessThan(l, r) => self.translate(Expr::GreaterThan(r, l)),
 
-                self.insts.push(Inst::Eq(a1, a2, v1, v2));
-                Val::Stack(self.push_any(), true)
-            }
-            Expr::LessThan(l, r) => {
-                let (v1, v2) = (self.translate(*l), self.translate(*r));
-                let (a1, a2) = self.check_drop2(&v1, &v2);
-
-                self.insts.push(Inst::Gt(a2, a1, v2, v1));
-                Val::Stack(self.push_any(), true)
-            }
-
-            _ => unimplemented!(),
-        };
-        // println!("CHECK {:?} {:?}", self.insts.last(), self.local.values());
-        outp
+            e => unimplemented!("{e:?}"),
+        }
     }
 }
 

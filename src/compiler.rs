@@ -306,7 +306,7 @@ impl<'a> FuncBuild<'a> {
         Stkval::Local(i as u8)
     }
 
-    fn is_drop(&mut self, v: &Val) -> bool {
+    fn check_drop(&mut self, v: &Val) -> bool {
         if let Val::Stack(Stkval::Local(i), true) = v {
             self.local.pop(*i as usize);
             true
@@ -314,8 +314,8 @@ impl<'a> FuncBuild<'a> {
             false
         }
     }
-    fn is_drop2(&mut self, v1: &Val, v2: &Val) -> (bool, bool) {
-        (self.is_drop(v1), self.is_drop(v2))
+    fn check_drop2(&mut self, v1: &Val, v2: &Val) -> (bool, bool) {
+        (self.check_drop(v1), self.check_drop(v2))
     }
 
     fn translate(&mut self, e: Expr) -> Val {
@@ -336,84 +336,119 @@ impl<'a> FuncBuild<'a> {
             Expr::Literal(Literal::Integer(i)) => Val::Int64(i),
             Expr::Literal(Literal::Nil) => Val::Nil,
             Expr::Literal(Literal::String(s)) => Val::String(s),
-            /* ident */
+            /* vars */
             Expr::Literal(Literal::Ident(id, Some(rs))) => {
                 Val::Stack(self.find(&id), rs.now == rs.meta.total.get())
+            }
+            Expr::Assign(l, r) => {
+                let Expr::Literal(Literal::Ident(id, Some(ref_stat))) = *l else {
+                    unreachable!()
+                };
+
+                // will the var ever get used?
+                let gets_used = ref_stat.now != ref_stat.meta.total.get();
+
+                match *r {
+                    // the var's value is a literal, and it gets used; add to stack
+                    Expr::Literal(lit) if gets_used => {
+                        let v1 = self.translate(Expr::Literal(lit));
+                        self.insts.push(Inst::Copy(v1));
+                        Val::Stack(self.push_any(), false)
+                    }
+                    // it doesn't get used; just treat it like a literal
+                    Expr::Literal(lit) => self.translate(Expr::Literal(lit)),
+
+                    // value is an expr
+                    e => {
+                        // translate the value
+                        let val = self.translate(e);
+                        // we know the top of the stack is the result
+                        // so lets keep track of that
+                        self.local.swap_top(FSValue::Var(id));
+                        // also if this val is never used again, just pop it now
+                        if !gets_used {
+                            self.local.pop_top();
+                            self.insts
+                                .push(Inst::Pop(Stkval::Local(self.local.height() as u8)));
+                        }
+                        val
+                    }
+                }
             }
             /* math */
             Expr::Add(l, r) => {
                 let (v1, v2) = (self.translate(*l), self.translate(*r));
-                let (a1, a2) = self.is_drop2(&v1, &v2);
+                let (a1, a2) = self.check_drop2(&v1, &v2);
 
                 self.insts.push(Inst::Add(a1, a2, v1, v2));
                 Val::Stack(self.push_any(), true)
             }
             Expr::Multiply(l, r) => {
                 let (v1, v2) = (self.translate(*l), self.translate(*r));
-                let (a1, a2) = self.is_drop2(&v1, &v2);
+                let (a1, a2) = self.check_drop2(&v1, &v2);
 
                 self.insts.push(Inst::Mul(a1, a2, v1, v2));
                 Val::Stack(self.push_any(), true)
             }
             Expr::Divide(l, r) => {
                 let (v1, v2) = (self.translate(*l), self.translate(*r));
-                let (a1, a2) = self.is_drop2(&v1, &v2);
+                let (a1, a2) = self.check_drop2(&v1, &v2);
 
                 self.insts.push(Inst::Div(a1, a2, v1, v2));
                 Val::Stack(self.push_any(), true)
             }
             Expr::Modulo(l, r) => {
                 let (v1, v2) = (self.translate(*l), self.translate(*r));
-                let (a1, a2) = self.is_drop2(&v1, &v2);
+                let (a1, a2) = self.check_drop2(&v1, &v2);
 
                 self.insts.push(Inst::Mod(a1, a2, v1, v2));
                 Val::Stack(self.push_any(), true)
             }
             Expr::Exponent(l, r) => {
                 let (v1, v2) = (self.translate(*l), self.translate(*r));
-                let (a1, a2) = self.is_drop2(&v1, &v2);
+                let (a1, a2) = self.check_drop2(&v1, &v2);
 
                 self.insts.push(Inst::Pow(a1, a2, v1, v2));
                 Val::Stack(self.push_any(), true)
             }
             Expr::And(l, r) => {
                 let (v1, v2) = (self.translate(*l), self.translate(*r));
-                let (a1, a2) = self.is_drop2(&v1, &v2);
+                let (a1, a2) = self.check_drop2(&v1, &v2);
 
                 self.insts.push(Inst::And(a1, a2, v1, v2));
                 Val::Stack(self.push_any(), true)
             }
             Expr::Or(l, r) => {
                 let (v1, v2) = (self.translate(*l), self.translate(*r));
-                let (a1, a2) = self.is_drop2(&v1, &v2);
+                let (a1, a2) = self.check_drop2(&v1, &v2);
 
                 self.insts.push(Inst::Or(a1, a2, v1, v2));
                 Val::Stack(self.push_any(), true)
             }
             Expr::EqualTo(l, r) => {
                 let (v1, v2) = (self.translate(*l), self.translate(*r));
-                let (a1, a2) = self.is_drop2(&v1, &v2);
+                let (a1, a2) = self.check_drop2(&v1, &v2);
 
                 self.insts.push(Inst::Eq(a1, a2, v1, v2));
                 Val::Stack(self.push_any(), true)
             }
             Expr::NotEqualTo(l, r) => {
                 let (v1, v2) = (self.translate(*l), self.translate(Expr::Not(r)));
-                let (a1, a2) = self.is_drop2(&v1, &v2);
+                let (a1, a2) = self.check_drop2(&v1, &v2);
 
                 self.insts.push(Inst::Eq(a1, a2, v1, v2));
                 Val::Stack(self.push_any(), true)
             }
             Expr::GreaterThan(l, r) => {
                 let (v1, v2) = (self.translate(*l), self.translate(*r));
-                let (a1, a2) = self.is_drop2(&v1, &v2);
+                let (a1, a2) = self.check_drop2(&v1, &v2);
 
                 self.insts.push(Inst::Gt(a1, a2, v1, v2));
                 Val::Stack(self.push_any(), true)
             }
             Expr::LessThan(l, r) => {
                 let (v1, v2) = (self.translate(*l), self.translate(*r));
-                let (a1, a2) = self.is_drop2(&v1, &v2);
+                let (a1, a2) = self.check_drop2(&v1, &v2);
 
                 self.insts.push(Inst::Gt(a2, a1, v2, v1));
                 Val::Stack(self.push_any(), true)
@@ -426,40 +461,17 @@ impl<'a> FuncBuild<'a> {
                         Box::new(Expr::Literal(Literal::Integer(-1))),
                     )),
                 );
-                let (a1, a2) = self.is_drop2(&v1, &v2);
+                let (a1, a2) = self.check_drop2(&v1, &v2);
 
                 self.insts.push(Inst::Add(a1, a2, v1, v2));
                 Val::Stack(self.push_any(), true)
             }
             Expr::Not(r) => {
                 let v1 = self.translate(*r);
-                let a1 = self.is_drop(&v1);
+                let a1 = self.check_drop(&v1);
 
                 self.insts.push(Inst::Not(a1, v1));
                 Val::Stack(self.push_any(), true)
-            }
-            Expr::Assign(l, r) => {
-                let Expr::Literal(Literal::Ident(id, Some(ref_stat))) = *l else {
-                    unreachable!()
-                };
-
-                let gets_used = ref_stat.now != ref_stat.meta.total.get();
-
-                match *r {
-                    Expr::Literal(lit) if gets_used => {
-                        let v1 = self.translate(Expr::Literal(lit));
-                        self.insts.push(Inst::Copy(v1));
-                        Val::Stack(self.push_any(), false)
-                    }
-                    Expr::Literal(lit) => self.translate(Expr::Literal(lit)),
-                    e => {
-                        let val = self.translate(e);
-                        // we know the top of the stack is the result
-                        // so lets keep track of that
-                        self.local.swap_top(FSValue::Var(id));
-                        val
-                    }
-                }
             }
             _ => unimplemented!(),
         };

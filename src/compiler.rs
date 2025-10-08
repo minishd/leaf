@@ -300,10 +300,23 @@ impl<'a> FuncBuild<'a> {
             .unwrap()
     }
 
+    /// Returns stackval for top item of stack.
+    /// (Panics if empty)
+    fn top(&self) -> Stkval {
+        Stkval::Local(self.local.top_index() as u8)
+    }
+
+    /// Pushes a value to stack and returns its stackval.
     fn push_any(&mut self) -> Stkval {
-        let i = self.local.height();
         self.local.push(FSValue::Any);
-        Stkval::Local(i as u8)
+        self.top()
+    }
+
+    /// Pops top stack value and returns its stackval.
+    fn pop_top(&mut self) -> Stkval {
+        let to_pop = self.top();
+        self.local.values_mut().pop();
+        to_pop
     }
 
     fn check_drop(&mut self, v: &Val) -> bool {
@@ -316,6 +329,21 @@ impl<'a> FuncBuild<'a> {
     }
     fn check_drop2(&mut self, v1: &Val, v2: &Val) -> (bool, bool) {
         (self.check_drop(v1), self.check_drop(v2))
+    }
+
+    fn gen_unop(&mut self, r: Expr, f: impl Fn(bool, Val) -> Inst) -> Val {
+        let v1 = self.translate(r);
+        let a1 = self.check_drop(&v1);
+
+        self.insts.push(f(a1, v1));
+        Val::Stack(self.push_any(), true)
+    }
+    fn gen_binop(&mut self, l: Expr, r: Expr, f: impl Fn(bool, bool, Val, Val) -> Inst) -> Val {
+        let (v1, v2) = (self.translate(l), self.translate(r));
+        let (a1, a2) = self.check_drop2(&v1, &v2);
+
+        self.insts.push(f(a1, a2, v1, v2));
+        Val::Stack(self.push_any(), true)
     }
 
     fn translate(&mut self, e: Expr) -> Val {
@@ -367,83 +395,56 @@ impl<'a> FuncBuild<'a> {
                         self.local.swap_top(FSValue::Var(id));
                         // also if this val is never used again, just pop it now
                         if !gets_used {
-                            self.local.pop_top();
-                            self.insts
-                                .push(Inst::Pop(Stkval::Local(self.local.height() as u8)));
+                            let v1 = self.pop_top();
+                            self.insts.push(Inst::Pop(v1));
                         }
                         val
                     }
                 }
             }
+
             /* math */
-            Expr::Add(l, r) => {
-                let (v1, v2) = (self.translate(*l), self.translate(*r));
-                let (a1, a2) = self.check_drop2(&v1, &v2);
+            Expr::Add(l, r) => self.gen_binop(*l, *r, Inst::Add),
+            Expr::Multiply(l, r) => self.gen_binop(*l, *r, Inst::Mul),
+            Expr::Divide(l, r) => self.gen_binop(*l, *r, Inst::Div),
+            Expr::Modulo(l, r) => self.gen_binop(*l, *r, Inst::Mod),
+            Expr::Exponent(l, r) => self.gen_binop(*l, *r, Inst::Pow),
 
-                self.insts.push(Inst::Add(a1, a2, v1, v2));
+            Expr::Subtract(l, r) => {
+                // negate
+                let nv2 = match *r {
+                    // statically
+                    Expr::Literal(Literal::Integer(i)) => Val::Int64(-i),
+                    Expr::Literal(Literal::Float(f)) => Val::Float64(-f),
+                    // at runtime
+                    e => {
+                        let v2 = self.translate(e);
+                        let a2 = self.check_drop(&v2);
+                        self.insts.push(Inst::Mul(a2, false, v2, Val::Int64(-1)));
+                        Val::Stack(self.pop_top(), true)
+                    }
+                };
+
+                // add
+                let v1 = self.translate(*l);
+                let a1 = self.check_drop(&v1);
+
+                self.insts.push(Inst::Add(a1, true, v1, nv2));
                 Val::Stack(self.push_any(), true)
             }
-            Expr::Multiply(l, r) => {
-                let (v1, v2) = (self.translate(*l), self.translate(*r));
-                let (a1, a2) = self.check_drop2(&v1, &v2);
 
-                self.insts.push(Inst::Mul(a1, a2, v1, v2));
-                Val::Stack(self.push_any(), true)
-            }
-            Expr::Divide(l, r) => {
-                let (v1, v2) = (self.translate(*l), self.translate(*r));
-                let (a1, a2) = self.check_drop2(&v1, &v2);
+            /* logic */
+            Expr::And(l, r) => self.gen_binop(*l, *r, Inst::And),
+            Expr::Or(l, r) => self.gen_binop(*l, *r, Inst::Or),
+            Expr::EqualTo(l, r) => self.gen_binop(*l, *r, Inst::Eq),
+            Expr::GreaterThan(l, r) => self.gen_binop(*l, *r, Inst::Gt),
+            Expr::Not(r) => self.gen_unop(*r, Inst::Not),
 
-                self.insts.push(Inst::Div(a1, a2, v1, v2));
-                Val::Stack(self.push_any(), true)
-            }
-            Expr::Modulo(l, r) => {
-                let (v1, v2) = (self.translate(*l), self.translate(*r));
-                let (a1, a2) = self.check_drop2(&v1, &v2);
-
-                self.insts.push(Inst::Mod(a1, a2, v1, v2));
-                Val::Stack(self.push_any(), true)
-            }
-            Expr::Exponent(l, r) => {
-                let (v1, v2) = (self.translate(*l), self.translate(*r));
-                let (a1, a2) = self.check_drop2(&v1, &v2);
-
-                self.insts.push(Inst::Pow(a1, a2, v1, v2));
-                Val::Stack(self.push_any(), true)
-            }
-            Expr::And(l, r) => {
-                let (v1, v2) = (self.translate(*l), self.translate(*r));
-                let (a1, a2) = self.check_drop2(&v1, &v2);
-
-                self.insts.push(Inst::And(a1, a2, v1, v2));
-                Val::Stack(self.push_any(), true)
-            }
-            Expr::Or(l, r) => {
-                let (v1, v2) = (self.translate(*l), self.translate(*r));
-                let (a1, a2) = self.check_drop2(&v1, &v2);
-
-                self.insts.push(Inst::Or(a1, a2, v1, v2));
-                Val::Stack(self.push_any(), true)
-            }
-            Expr::EqualTo(l, r) => {
-                let (v1, v2) = (self.translate(*l), self.translate(*r));
-                let (a1, a2) = self.check_drop2(&v1, &v2);
-
-                self.insts.push(Inst::Eq(a1, a2, v1, v2));
-                Val::Stack(self.push_any(), true)
-            }
             Expr::NotEqualTo(l, r) => {
                 let (v1, v2) = (self.translate(*l), self.translate(Expr::Not(r)));
                 let (a1, a2) = self.check_drop2(&v1, &v2);
 
                 self.insts.push(Inst::Eq(a1, a2, v1, v2));
-                Val::Stack(self.push_any(), true)
-            }
-            Expr::GreaterThan(l, r) => {
-                let (v1, v2) = (self.translate(*l), self.translate(*r));
-                let (a1, a2) = self.check_drop2(&v1, &v2);
-
-                self.insts.push(Inst::Gt(a1, a2, v1, v2));
                 Val::Stack(self.push_any(), true)
             }
             Expr::LessThan(l, r) => {
@@ -453,26 +454,7 @@ impl<'a> FuncBuild<'a> {
                 self.insts.push(Inst::Gt(a2, a1, v2, v1));
                 Val::Stack(self.push_any(), true)
             }
-            Expr::Subtract(l, r) => {
-                let (v1, v2) = (
-                    self.translate(*l),
-                    self.translate(Expr::Multiply(
-                        r,
-                        Box::new(Expr::Literal(Literal::Integer(-1))),
-                    )),
-                );
-                let (a1, a2) = self.check_drop2(&v1, &v2);
 
-                self.insts.push(Inst::Add(a1, a2, v1, v2));
-                Val::Stack(self.push_any(), true)
-            }
-            Expr::Not(r) => {
-                let v1 = self.translate(*r);
-                let a1 = self.check_drop(&v1);
-
-                self.insts.push(Inst::Not(a1, v1));
-                Val::Stack(self.push_any(), true)
-            }
             _ => unimplemented!(),
         };
         // println!("CHECK {:?} {:?}", self.insts.last(), self.local.values());

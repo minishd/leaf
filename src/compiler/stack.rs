@@ -20,14 +20,11 @@ where
     fn pop(&mut self, index: usize) {
         self.values_mut().remove(index);
     }
-    fn height(&self) -> usize {
-        self.values().len()
+    fn top_index(&self) -> usize {
+        self.values().len() - 1
     }
     fn swap_top(&mut self, new: Self::Value) {
         *self.values_mut().last_mut().unwrap() = new;
-    }
-    fn pop_top(&mut self) {
-        self.values_mut().pop();
     }
 
     fn find(&self, input: &Self::Input) -> Option<(Self::Output, u16)> {

@@ -332,12 +332,11 @@ impl<'a> FuncBuild<'a> {
         (self.check_drop(v1), self.check_drop(v2))
     }
 
-    fn gen_unop(&mut self, r: Expr, f: impl Fn(bool, Val) -> Inst, is_captured: bool) -> Val {
-        let v1 = self.translate(r, is_captured);
+    fn gen_unop(&mut self, r: Expr, f: impl Fn(bool, Val) -> Inst, do_compute: bool) -> Val {
+        let v1 = self.translate(r, do_compute, false);
 
-        // If nothing will use this,
-        // don't generate anything
-        if !is_captured {
+        // Don't compute anything unnecessarily
+        if !do_compute {
             return Val::Nil;
         }
 
@@ -351,15 +350,15 @@ impl<'a> FuncBuild<'a> {
         l: Expr,
         r: Expr,
         f: impl Fn(bool, bool, Val, Val) -> Inst,
-        is_captured: bool,
+        do_compute: bool,
     ) -> Val {
         let (v1, v2) = (
-            self.translate(l, is_captured),
-            self.translate(r, is_captured),
+            self.translate(l, do_compute, false),
+            self.translate(r, do_compute, false),
         );
 
         // If this is unused, do not generate code
-        if !is_captured {
+        if !do_compute {
             return Val::Nil;
         }
 
@@ -369,21 +368,22 @@ impl<'a> FuncBuild<'a> {
         Val::Stack(self.push_any(), true)
     }
 
-    fn translate(&mut self, e: Expr, is_captured: bool) -> Val {
+    fn translate(&mut self, e: Expr, do_compute: bool, do_yield: bool) -> Val {
         match e {
             /* organisational */
             Expr::Block(mut b) => {
                 let last = b.exprs.pop();
                 for e in b.exprs {
-                    self.translate(e, false);
+                    self.translate(e, false, false);
                 }
                 // yield last expr
-                last.map_or(Val::Nil, |e| self.translate(e, is_captured))
+                last.map_or(Val::Nil, |e| self.translate(e, false, do_yield))
             }
 
             /* captured literal */
-            Expr::Literal(lit) if is_captured => {
-                let v1 = self.translate(Expr::Literal(lit), false);
+            Expr::Literal(lit) if do_yield => {
+                // compute doesn't matter here since we don't compute anything
+                let v1 = self.translate(Expr::Literal(lit), false, false);
                 self.insts.push(Inst::Copy(v1));
                 Val::Stack(self.push_any(), false)
             }
@@ -407,34 +407,47 @@ impl<'a> FuncBuild<'a> {
                 // will the var ever get referenced?
                 let gets_referenced = ref_stat.now != ref_stat.meta.total.get();
 
-                // if this isn't getting captured OR referenced,
+                // if this isn't getting used for computation OR referenced,
                 // just continue translation without adding to stack
-                if !(is_captured || gets_referenced) {
-                    self.translate(*r, false)
+                if !(do_compute || gets_referenced) {
+                    // do_compute would be false anyway
+                    self.translate(*r, false, false)
                 } else {
                     // get val
                     let val = match *r {
                         // the var's value is a literal
-                        Expr::Literal(lit) => self.translate(Expr::Literal(lit), gets_referenced),
+                        // do_compute doesn't matter so leave it as false
+                        // if the var gets used as a var, we yield to stack
+                        // otherwise just return the literal
+                        Expr::Literal(lit) => {
+                            self.translate(Expr::Literal(lit), false, gets_referenced)
+                        }
 
                         // value is an expr
-                        e => self.translate(e, true),
+                        // compute it and yield to stack if it gets used
+                        e => self.translate(e, true, gets_referenced),
                     };
-                    // if the var got used, it will be on stack
-                    // so keep track of it
-                    if gets_referenced {
-                        self.local.swap_top(FSValue::Var(id));
+
+                    // handle value
+                    match val {
+                        // if it was added to stack, keep track of it
+                        // (and apply appropriate drop rule)
+                        Val::Stack(sv, _) => {
+                            self.local.swap_top(FSValue::Var(id));
+                            Val::Stack(sv, gets_referenced)
+                        }
+                        // okay to return as-is
+                        val => val,
                     }
-                    val
                 }
             }
 
             /* math */
-            Expr::Add(l, r) => self.gen_binop(*l, *r, Inst::Add, is_captured),
-            Expr::Multiply(l, r) => self.gen_binop(*l, *r, Inst::Mul, is_captured),
-            Expr::Divide(l, r) => self.gen_binop(*l, *r, Inst::Div, is_captured),
-            Expr::Modulo(l, r) => self.gen_binop(*l, *r, Inst::Mod, is_captured),
-            Expr::Exponent(l, r) => self.gen_binop(*l, *r, Inst::Pow, is_captured),
+            Expr::Add(l, r) => self.gen_binop(*l, *r, Inst::Add, do_compute),
+            Expr::Multiply(l, r) => self.gen_binop(*l, *r, Inst::Mul, do_compute),
+            Expr::Divide(l, r) => self.gen_binop(*l, *r, Inst::Div, do_compute),
+            Expr::Modulo(l, r) => self.gen_binop(*l, *r, Inst::Mod, do_compute),
+            Expr::Exponent(l, r) => self.gen_binop(*l, *r, Inst::Pow, do_compute),
 
             Expr::Subtract(l, r) => {
                 // negate
@@ -444,7 +457,7 @@ impl<'a> FuncBuild<'a> {
                     Expr::Literal(Literal::Float(f)) => Val::Float64(-f),
                     // at runtime
                     e => {
-                        let v2 = self.translate(e, is_captured);
+                        let v2 = self.translate(e, do_compute, do_yield);
                         let a2 = self.check_drop(&v2);
                         self.insts.push(Inst::Mul(a2, false, v2, Val::Int64(-1)));
                         Val::Stack(self.pop_top(), true)
@@ -452,7 +465,7 @@ impl<'a> FuncBuild<'a> {
                 };
 
                 // add
-                let v1 = self.translate(*l, is_captured);
+                let v1 = self.translate(*l, do_compute, do_yield);
                 let a1 = self.check_drop(&v1);
 
                 self.insts.push(Inst::Add(a1, true, v1, nv2));
@@ -460,17 +473,17 @@ impl<'a> FuncBuild<'a> {
             }
 
             /* logic */
-            Expr::And(l, r) => self.gen_binop(*l, *r, Inst::And, is_captured),
-            Expr::Or(l, r) => self.gen_binop(*l, *r, Inst::Or, is_captured),
-            Expr::EqualTo(l, r) => self.gen_binop(*l, *r, Inst::Eq, is_captured),
-            Expr::GreaterThan(l, r) => self.gen_binop(*l, *r, Inst::Gt, is_captured),
-            Expr::GreaterThanOrEqualTo(l, r) => self.gen_binop(*l, *r, Inst::GtEq, is_captured),
-            Expr::Not(r) => self.gen_unop(*r, Inst::Not, is_captured),
+            Expr::And(l, r) => self.gen_binop(*l, *r, Inst::And, do_compute),
+            Expr::Or(l, r) => self.gen_binop(*l, *r, Inst::Or, do_compute),
+            Expr::EqualTo(l, r) => self.gen_binop(*l, *r, Inst::Eq, do_compute),
+            Expr::GreaterThan(l, r) => self.gen_binop(*l, *r, Inst::Gt, do_compute),
+            Expr::GreaterThanOrEqualTo(l, r) => self.gen_binop(*l, *r, Inst::GtEq, do_compute),
+            Expr::Not(r) => self.gen_unop(*r, Inst::Not, do_compute),
 
             Expr::NotEqualTo(l, r) => {
-                self.translate(Expr::Not(Box::new(Expr::EqualTo(l, r))), is_captured)
+                self.translate(Expr::Not(Box::new(Expr::EqualTo(l, r))), do_compute, false)
             }
-            Expr::LessThan(l, r) => self.translate(Expr::GreaterThan(r, l), is_captured),
+            Expr::LessThan(l, r) => self.translate(Expr::GreaterThan(r, l), do_compute, false),
 
             e => unimplemented!("{e:?}"),
         }
@@ -486,6 +499,6 @@ pub fn analysis_demo(e: &mut Expr) {
 pub fn translation_demo(e: Expr) -> Vec<Inst> {
     // translation pass
     let mut fb = FuncBuild::new_root();
-    fb.translate(e, false);
+    fb.translate(e, false, false);
     fb.insts
 }

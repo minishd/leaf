@@ -67,7 +67,7 @@ pub struct RefMeta {
     pub is_shared: Cell<bool>,
 }
 
-fn analyze(fs: &FuncStat, scope: &mut Scope, e: &mut Expr) {
+fn analyze(fs: &FuncStat, scope: &mut Scope, e: &mut Expr, gets_captured: bool) {
     match e {
         Expr::Assign(a, b) => {
             let Expr::Literal(Literal::Ident(id, ref_stat)) = &mut **a else {
@@ -78,28 +78,38 @@ fn analyze(fs: &FuncStat, scope: &mut Scope, e: &mut Expr) {
             let rm = scope.assigned(id.clone());
 
             // add ref stat
-            *ref_stat = Some(RefStat { now: rm.total.get(), meta: rm });
+            *ref_stat = Some(RefStat {
+                now: rm.total.get(),
+                meta: rm,
+            });
 
             // analyse the value
-            analyze(fs, scope, b);
+            analyze(fs, scope, b, true);
         }
         Expr::Literal(Literal::Ident(id, ref_stat)) => {
-            // lookup literal
+            // lookup ident
             let Some((rm, up_levels)) = scope.find(id) else {
                 panic!("unfound variable")
             };
-            // increment # of uses
-            rm.total.update(|c| c + 1);
+
+            // the var got used, so the compiler will gen code for it
+            // it is okay to count
+            if gets_captured {
+                // increment # of uses
+                rm.total.update(|c| c + 1);
+
+                // if we used something external to this scope, note it
+                if up_levels != 0 {
+                    fs.is_unreturnable.set(true);
+                    rm.is_shared.set(true);
+                }
+            }
+
             // set ref meta
             *ref_stat = Some(RefStat {
                 now: rm.total.get(),
                 meta: rm.clone(),
             });
-            // if we used something external to this scope, note it
-            if up_levels != 0 {
-                fs.is_unreturnable.set(true);
-                rm.is_shared.set(true);
-            }
         }
         // ignore
         Expr::Literal(_) => {}
@@ -107,9 +117,16 @@ fn analyze(fs: &FuncStat, scope: &mut Scope, e: &mut Expr) {
         Expr::Block(a) => {
             // blocks have their own scope
             let mut scope = Scope::with_parent(Some(scope));
+            // last is treated differently
+            let last = a.exprs.pop();
             // analyze the contents in the new scope
             for e in &mut a.exprs {
-                analyze(fs, &mut scope, e);
+                analyze(fs, &mut scope, e, false);
+            }
+            // analyze last
+            if let Some(mut last) = last {
+                analyze(fs, &mut scope, &mut last, gets_captured);
+                a.exprs.push(last);
             }
         }
         Expr::Func(a, b, func_stat) => {
@@ -128,22 +145,22 @@ fn analyze(fs: &FuncStat, scope: &mut Scope, e: &mut Expr) {
             }
 
             // now analyze the body in the new scope
-            analyze(&fs, &mut scope, b);
+            analyze(&fs, &mut scope, b, true);
         }
         Expr::If(a, b, c) => {
-            analyze(fs, scope, a);
-            analyze(fs, scope, b);
+            analyze(fs, scope, a, true);
+            analyze(fs, scope, b, gets_captured);
             if let Some(c) = c {
-                analyze(fs, scope, c);
+                analyze(fs, scope, c, gets_captured);
             }
         }
         Expr::Call(a, b) => {
-            analyze(fs, scope, a);
+            analyze(fs, scope, a, true);
             for e in b {
-                analyze(fs, scope, e);
+                analyze(fs, scope, e, true);
             }
         }
-        Expr::Return(a) | Expr::Negate(a) | Expr::Not(a) => analyze(fs, scope, a),
+        Expr::Return(a) | Expr::Negate(a) | Expr::Not(a) => analyze(fs, scope, a, true),
         Expr::EqualTo(a, b)
         | Expr::NotEqualTo(a, b)
         | Expr::And(a, b)
@@ -157,13 +174,16 @@ fn analyze(fs: &FuncStat, scope: &mut Scope, e: &mut Expr) {
         | Expr::Multiply(a, b)
         | Expr::Divide(a, b)
         | Expr::Exponent(a, b)
-        | Expr::Modulo(a, b)
-        | Expr::AddAssign(a, b) // maybe handle these differently?
-        | Expr::SubtractAssign(a, b) // when error handling is added at least
+        | Expr::Modulo(a, b) => {
+            analyze(fs, scope, a, gets_captured);
+            analyze(fs, scope, b, gets_captured);
+        }
+        Expr::AddAssign(a, b)
+        | Expr::SubtractAssign(a, b)
         | Expr::MultiplyAssign(a, b)
-        | Expr::DivideAssign(a, b) =>{
-            analyze(fs, scope, a);
-            analyze(fs, scope, b);
+        | Expr::DivideAssign(a, b) => {
+            analyze(fs, scope, a, true);
+            analyze(fs, scope, b, true);
         }
     }
 }
@@ -410,17 +430,16 @@ impl<'a> FuncBuild<'a> {
                 // if this isn't getting used for computation OR referenced,
                 // just continue translation without adding to stack
                 if !(do_compute || gets_referenced) {
-                    // do_compute would be false anyway
-                    self.translate(*r, false, false)
+                    // do_compute doesn't matter for literals
+                    self.translate(*r, true, false)
                 } else {
                     // get val
                     let val = match *r {
                         // the var's value is a literal
-                        // do_compute doesn't matter so leave it as false
-                        // if the var gets used as a var, we yield to stack
+                        // if the var gets used as a var, yield to stack
                         // otherwise just return the literal
                         Expr::Literal(lit) => {
-                            self.translate(Expr::Literal(lit), false, gets_referenced)
+                            self.translate(Expr::Literal(lit), true, gets_referenced)
                         }
 
                         // value is an expr
@@ -494,7 +513,7 @@ pub fn analysis_demo(e: &mut Expr) {
     // analysis pass
     let fs = FuncStat::default();
     let mut scope = Scope::with_parent(None);
-    analyze(&fs, &mut scope, e);
+    analyze(&fs, &mut scope, e, false);
 }
 pub fn translation_demo(e: Expr) -> Vec<Inst> {
     // translation pass

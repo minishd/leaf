@@ -226,8 +226,8 @@ pub enum Inst {
     GtEq(bool, bool, Val, Val),
     /* is conditional? ; what condition? */
     Skip(bool, bool, i16),
-    /* is conditional? ; what condition? ; pop result? */
-    Call(bool, bool, bool, Val),
+    /* push result? ; pop a1? */
+    Call(bool, bool, Val),
     /* pop a1? ; pop a2 */
     Add(bool, bool, Val, Val),
     Mul(bool, bool, Val, Val),
@@ -238,8 +238,6 @@ pub enum Inst {
     Or(bool, bool, Val, Val),
     /* pop a1? */
     Not(bool, Val),
-    /* ... */
-    Pop(Stkval),
     /* pop a2? */
     Write(bool, Stkval, Val),
     /* ... */
@@ -399,6 +397,39 @@ impl<'a> FuncBuild<'a> {
                 // yield last expr
                 last.map_or(Val::Nil, |e| self.translate(e, false, do_yield))
             }
+            Expr::Func(args, exprs, fs) => {
+                //1
+                Val::Nil
+            }
+
+            /* control flow */
+            Expr::Return(r) => {
+                // calculate return value
+                let v1 = self.translate(*r, true, false);
+                // add return inst, eval to nil
+                self.insts.push(Inst::Return(v1));
+                Val::Nil
+            }
+            Expr::Call(func, args) => {
+                // get the function
+                let v1 = self.translate(*func, true, false);
+                let a1 = self.check_drop(&v1);
+                // yield all args to stack
+                for arg in args {
+                    self.translate(arg, true, true);
+                }
+                // decide if we push result to stack
+                // if we are computing a value or yielding one, then yes
+                let push = do_compute || do_yield;
+                // add call
+                self.insts.push(Inst::Call(push, a1, v1));
+                // whatever we output
+                if push {
+                    Val::Stack(self.push_any(), true)
+                } else {
+                    Val::Nil
+                }
+            }
 
             /* captured literal */
             Expr::Literal(lit) if do_yield => {
@@ -420,7 +451,6 @@ impl<'a> FuncBuild<'a> {
                 Val::Stack(self.find(&id), rs.now == rs.meta.total.get())
             }
             Expr::Literal(Literal::Ident(_, _)) => Val::Nil,
-
             Expr::Assign(l, r) => {
                 let Expr::Literal(Literal::Ident(id, Some(ref_stat))) = *l else {
                     unreachable!()
@@ -470,6 +500,45 @@ impl<'a> FuncBuild<'a> {
             Expr::Modulo(l, r) => self.gen_binop(*l, *r, Inst::Mod, do_compute),
             Expr::Exponent(l, r) => self.gen_binop(*l, *r, Inst::Pow, do_compute),
 
+            /* math assignments */
+            Expr::AddAssign(l, r) => self.translate(
+                Expr::Assign(l.clone(), Box::new(Expr::Add(l, r))),
+                do_compute,
+                do_yield,
+            ),
+            Expr::SubtractAssign(l, r) => self.translate(
+                Expr::Assign(l.clone(), Box::new(Expr::Subtract(l, r))),
+                do_compute,
+                do_yield,
+            ),
+            Expr::MultiplyAssign(l, r) => self.translate(
+                Expr::Assign(l.clone(), Box::new(Expr::Multiply(l, r))),
+                do_compute,
+                do_yield,
+            ),
+            Expr::DivideAssign(l, r) => self.translate(
+                Expr::Assign(l.clone(), Box::new(Expr::Divide(l, r))),
+                do_compute,
+                do_yield,
+            ),
+
+            /* math substitutions */
+            Expr::Negate(r) if do_compute => {
+                // negate
+                match *r {
+                    // statically
+                    Expr::Literal(Literal::Integer(i)) => Val::Int64(-i),
+                    Expr::Literal(Literal::Float(f)) => Val::Float64(-f),
+
+                    // at runtime
+                    e => {
+                        let e = Box::new(e);
+                        let minus_one = Box::new(Expr::Literal(Literal::Integer(-1)));
+                        self.translate(Expr::Multiply(e, minus_one), do_compute, do_yield)
+                    }
+                }
+            }
+            Expr::Negate(_) => Val::Nil,
             Expr::Subtract(l, r) => {
                 // negate
                 let nv2 = match *r {
@@ -501,10 +570,14 @@ impl<'a> FuncBuild<'a> {
             Expr::GreaterThanOrEqualTo(l, r) => self.gen_binop(*l, *r, Inst::GtEq, do_compute),
             Expr::Not(r) => self.gen_unop(*r, Inst::Not, do_compute),
 
+            /* logic substitutions */
             Expr::NotEqualTo(l, r) => {
                 self.translate(Expr::Not(Box::new(Expr::EqualTo(l, r))), do_compute, false)
             }
             Expr::LessThan(l, r) => self.translate(Expr::GreaterThan(r, l), do_compute, false),
+            Expr::LessThanOrEqualTo(l, r) => {
+                self.translate(Expr::GreaterThanOrEqualTo(r, l), do_compute, false)
+            }
 
             e => unimplemented!("{e:?}"),
         }

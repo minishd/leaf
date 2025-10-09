@@ -219,7 +219,7 @@ pub enum Val {
 #[derive(Debug)]
 pub enum Inst {
     /* ... */
-    Copy(Val),
+    Copy(bool, Val),
     /* pop a1? ; pop a2? */
     Eq(bool, bool, Val, Val),
     Gt(bool, bool, Val, Val),
@@ -402,9 +402,9 @@ impl<'a> FuncBuild<'a> {
 
             /* captured literal */
             Expr::Literal(lit) if do_yield => {
-                // compute doesn't matter here since we don't compute anything
-                let v1 = self.translate(Expr::Literal(lit), false, false);
-                self.insts.push(Inst::Copy(v1));
+                let v1 = self.translate(Expr::Literal(lit), true, false);
+                let a1 = self.check_drop(&v1);
+                self.insts.push(Inst::Copy(a1, v1));
                 Val::Stack(self.push_any(), false)
             }
 
@@ -416,9 +416,11 @@ impl<'a> FuncBuild<'a> {
             Expr::Literal(Literal::String(s)) => Val::String(s),
 
             /* vars */
-            Expr::Literal(Literal::Ident(id, Some(rs))) => {
+            Expr::Literal(Literal::Ident(id, Some(rs))) if do_compute => {
                 Val::Stack(self.find(&id), rs.now == rs.meta.total.get())
             }
+            Expr::Literal(Literal::Ident(_, _)) => Val::Nil,
+
             Expr::Assign(l, r) => {
                 let Expr::Literal(Literal::Ident(id, Some(ref_stat))) = *l else {
                     unreachable!()

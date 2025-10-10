@@ -191,7 +191,7 @@ fn analyze(fs: &FuncStat, scope: &mut Scope, e: &mut Expr, gets_captured: bool) 
 // --- translate pass --- //
 
 /* 1b is up? */
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub enum Stkval {
     /* 4b blank ; 8b offset */
     Local(u8),
@@ -238,9 +238,8 @@ pub enum Inst {
     Or(bool, bool, Val, Val),
     /* pop a1? */
     Not(bool, Val),
-    /* pop a2? */
-    Write(bool, Stkval, Val),
     /* ... */
+    Move(Stkval, Val),
     Return(Val),
 }
 
@@ -311,12 +310,11 @@ impl<'a> FuncBuild<'a> {
         }
     }
 
-    fn find(&mut self, id: &Ident) -> Stkval {
+    fn find(&mut self, id: &Ident) -> Option<Stkval> {
         self.shared
             .find(id)
             .map(|(count, up_levels)| Stkval::Shared(up_levels as u8, count as u8))
             .or_else(|| self.local.find(id).map(|(c, _)| Stkval::Local(c as u8)))
-            .unwrap()
     }
 
     /// Returns stackval for top item of stack.
@@ -448,7 +446,7 @@ impl<'a> FuncBuild<'a> {
 
             /* vars */
             Expr::Literal(Literal::Ident(id, Some(rs))) if do_compute => {
-                Val::Stack(self.find(&id), rs.now == rs.meta.total.get())
+                Val::Stack(self.find(&id).unwrap(), rs.now == rs.meta.total.get())
             }
             Expr::Literal(Literal::Ident(_, _)) => Val::Nil,
             Expr::Assign(l, r) => {
@@ -480,15 +478,26 @@ impl<'a> FuncBuild<'a> {
                     };
 
                     // handle value
-                    match val {
-                        // if it was added to stack, keep track of it
-                        // (and apply appropriate drop rule)
-                        Val::Stack(sv, _) => {
-                            self.local.swap_top(FSValue::Var(id));
-                            Val::Stack(sv, gets_referenced)
-                        }
-                        // okay to return as-is
+                    let val = match val {
+                        // apply appropriate drop rule
+                        Val::Stack(sv, _) => Val::Stack(sv, gets_referenced),
+                        // okay as-is
                         val => val,
+                    };
+
+                    // check if var already exists
+                    if let Some(sv) = self.find(&id) {
+                        // yes, move it there
+                        self.insts.push(Inst::Move(sv.clone(), val));
+                        // return new stackval
+                        Val::Stack(sv, gets_referenced)
+                    } else {
+                        // no it doesn't
+                        if matches!(val, Val::Stack(_, _)) {
+                            // it is a stackval so keep track of it
+                            self.local.swap_top(FSValue::Var(id));
+                        }
+                        val
                     }
                 }
             }

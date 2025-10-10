@@ -394,11 +394,11 @@ impl<'a> FuncBuild<'a> {
                 for e in b.exprs {
                     self.translate(e, false, false);
                 }
-                // yield last expr
-                last.map_or(Val::Nil, |e| self.translate(e, false, do_yield))
+                // compute/yield last expr if requested
+                last.map_or(Val::Nil, |e| self.translate(e, do_compute, do_yield))
             }
             Expr::Func(args, exprs, fs) => {
-                //1
+                // neww function!!!!
                 Val::Nil
             }
 
@@ -539,28 +539,11 @@ impl<'a> FuncBuild<'a> {
                 }
             }
             Expr::Negate(_) => Val::Nil,
-            Expr::Subtract(l, r) => {
-                // negate
-                let nv2 = match *r {
-                    // statically
-                    Expr::Literal(Literal::Integer(i)) => Val::Int64(-i),
-                    Expr::Literal(Literal::Float(f)) => Val::Float64(-f),
-                    // at runtime
-                    e => {
-                        let v2 = self.translate(e, do_compute, do_yield);
-                        let a2 = self.check_drop(&v2);
-                        self.insts.push(Inst::Mul(a2, false, v2, Val::Int64(-1)));
-                        Val::Stack(self.pop_top(), true)
-                    }
-                };
-
-                // add
-                let v1 = self.translate(*l, do_compute, do_yield);
-                let a1 = self.check_drop(&v1);
-
-                self.insts.push(Inst::Add(a1, true, v1, nv2));
-                Val::Stack(self.push_any(), true)
-            }
+            Expr::Subtract(l, r) => self.translate(
+                Expr::Add(l, Box::new(Expr::Negate(r))),
+                do_compute,
+                do_yield,
+            ),
 
             /* logic */
             Expr::And(l, r) => self.gen_binop(*l, *r, Inst::And, do_compute),

@@ -205,7 +205,7 @@ pub enum Val {
     /* u16 len, LEN data */
     String(String),
     /* 1b returnability, 4b arity, insts */
-    Func(bool, Vec<Inst>),
+    Func(bool, u8, Vec<Inst>),
     /* 1b value */
     Bool(bool),
     /* i64 data */
@@ -329,13 +329,6 @@ impl<'a> FuncBuild<'a> {
         self.top()
     }
 
-    /// Pops top stack value and returns its stackval.
-    fn pop_top(&mut self) -> Stkval {
-        let to_pop = self.top();
-        self.local.values_mut().pop();
-        to_pop
-    }
-
     fn check_drop(&mut self, v: &Val) -> bool {
         if let Val::Stack(Stkval::Local(i), true) = v {
             self.local.pop(*i as usize);
@@ -383,6 +376,11 @@ impl<'a> FuncBuild<'a> {
         self.insts.push(f(a1, a2, v1, v2));
         Val::Stack(self.push_any(), true)
     }
+    fn gen_copy(&mut self, v1: Val) -> Val {
+        let a1 = self.check_drop(&v1);
+        self.insts.push(Inst::Copy(a1, v1));
+        Val::Stack(self.push_any(), false)
+    }
 
     fn translate(&mut self, e: Expr, do_compute: bool, do_yield: bool) -> Val {
         match e {
@@ -395,9 +393,22 @@ impl<'a> FuncBuild<'a> {
                 // compute/yield last expr if requested
                 last.map_or(Val::Nil, |e| self.translate(e, do_compute, do_yield))
             }
-            Expr::Func(args, exprs, fs) => {
+            Expr::Func(args, expr, fs) => {
                 // neww function!!!!
-                Val::Nil
+                let mut fb = FuncBuild::with_parent(self);
+                // push args to stack
+                let arity = args.len() as u8;
+                for arg in args {
+                    let Expr::Literal(Literal::Ident(id, _)) = arg else {
+                        unreachable!()
+                    };
+                    fb.local.push(FSValue::Var(id));
+                }
+                // translate expr
+                fb.translate(*expr, true, false);
+                // pack
+                let returnability = fs.unwrap().is_unreturnable.get();
+                Val::Func(returnability, arity, fb.insts)
             }
 
             /* control flow */
@@ -432,9 +443,7 @@ impl<'a> FuncBuild<'a> {
             /* captured literal */
             Expr::Literal(lit) if do_yield => {
                 let v1 = self.translate(Expr::Literal(lit), true, false);
-                let a1 = self.check_drop(&v1);
-                self.insts.push(Inst::Copy(a1, v1));
-                Val::Stack(self.push_any(), false)
+                self.gen_copy(v1)
             }
 
             /* 1 to 1 literals */
@@ -481,9 +490,13 @@ impl<'a> FuncBuild<'a> {
                     let val = match val {
                         // apply appropriate drop rule
                         Val::Stack(sv, _) => Val::Stack(sv, gets_referenced),
+                        // non-literal type
+                        val if matches!(val, Val::Func(_, _, _)) => self.gen_copy(val),
                         // okay as-is
                         val => val,
                     };
+
+                    println!("{val:?}");
 
                     // check if var already exists
                     if let Some(sv) = self.find(&id) {

@@ -496,8 +496,6 @@ impl<'a> FuncBuild<'a> {
                         val => val,
                     };
 
-                    println!("{val:?}");
-
                     // check if var already exists
                     if let Some(sv) = self.find(&id) {
                         // yes, move it there

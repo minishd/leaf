@@ -193,14 +193,15 @@ fn analyze(fs: &FuncStat, scope: &mut Scope, e: &mut Expr, gets_captured: bool) 
 /* 1b is up? */
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub enum Stkval {
-    /* 4b blank ; 8b offset */
+    /* 12b offset */
     Local(u8),
     /* 4b up levels ; 8b offset */
     Shared(u8, u8),
 }
 /* 3b type tag */
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Val {
+    /* where? ; pop after use? */
     Stack(Stkval, bool),
     /* u16 len, LEN data */
     String(String),
@@ -215,32 +216,32 @@ pub enum Val {
     /* ... */
     Nil,
 }
-/* 5b inst type */
-#[derive(Debug)]
+/* 3b inst type */
+#[derive(Debug, Clone, PartialEq)]
 pub enum Inst {
-    /* ... */
+    /* is shared? ; val to copy */
     Copy(bool, Val),
-    /* pop a1? ; pop a2? */
-    Eq(bool, bool, Val, Val),
-    Gt(bool, bool, Val, Val),
-    GtEq(bool, bool, Val, Val),
-    /* is conditional? ; what condition? */
-    Skip(bool, bool, i16),
-    /* push result? ; pop a1? */
-    Call(bool, bool, Val),
-    /* pop a1? ; pop a2 */
-    Add(bool, bool, Val, Val),
-    Mul(bool, bool, Val, Val),
-    Div(bool, bool, Val, Val),
-    Mod(bool, bool, Val, Val),
-    Pow(bool, bool, Val, Val),
-    And(bool, bool, Val, Val),
-    Or(bool, bool, Val, Val),
-    /* pop a1? */
-    Not(bool, Val),
-    /* ... */
+    /* where to write, val to write */
     Move(Stkval, Val),
+    /* how much to increment PC */
+    CJump(usize),
+    /* push result? ; # args provided ; val to call */
+    Call(bool, u8, Val),
+    /* value to return */
     Return(Val),
+    /* lhs, rhs */
+    Eq(Val, Val),
+    Gt(Val, Val),
+    GtEq(Val, Val),
+    Add(Val, Val),
+    Mul(Val, Val),
+    Div(Val, Val),
+    Mod(Val, Val),
+    Pow(Val, Val),
+    And(Val, Val),
+    Or(Val, Val),
+    /* rhs */
+    Not(Val),
 }
 
 /// Value on fake stack.
@@ -322,6 +323,11 @@ impl<'a> FuncBuild<'a> {
     fn top(&self) -> Stkval {
         Stkval::Local(self.local.top_index() as u8)
     }
+    /// Returns stackval for top item of shared stack.
+    /// (Panics if empty)
+    fn top_shared(&self) -> Stkval {
+        Stkval::Shared(0, self.shared.top_index() as u8)
+    }
 
     /// Pushes a value to stack and returns its stackval.
     fn push_any(&mut self) -> Stkval {
@@ -329,19 +335,40 @@ impl<'a> FuncBuild<'a> {
         self.top()
     }
 
-    fn check_drop(&mut self, v: &Val) -> bool {
+    fn check_drop(&mut self, v: &Val) {
         if let Val::Stack(Stkval::Local(i), true) = v {
             self.local.pop(*i as usize);
-            true
-        } else {
-            false
         }
     }
-    fn check_drop2(&mut self, v1: &Val, v2: &Val) -> (bool, bool) {
-        (self.check_drop(v1), self.check_drop(v2))
+
+    fn check_drops<const N: usize>(&mut self, mut vl: [&mut Val; N]) {
+        use {Stkval::*, Val::*};
+
+        // Sort low->high
+        vl.sort_by_key(|v| match v {
+            Val::Stack(Stkval::Local(o), _) => *o as i16,
+            // It doesn't matter
+            _ => 0,
+        });
+
+        // Fix indices
+        let mut to_pop = Vec::new();
+        for v in vl {
+            if let Stack(Local(o), p) = v {
+                *o -= to_pop.len() as u8;
+                if *p {
+                    to_pop.push(*o as usize);
+                }
+            }
+        }
+
+        // Pop
+        for o in to_pop {
+            self.local.pop(o);
+        }
     }
 
-    fn gen_unop(&mut self, r: Expr, f: impl Fn(bool, Val) -> Inst, do_compute: bool) -> Val {
+    fn gen_unop(&mut self, r: Expr, f: impl Fn(Val) -> Inst, do_compute: bool) -> Val {
         let v1 = self.translate(r, do_compute, false);
 
         // Don't compute anything unnecessarily
@@ -349,19 +376,19 @@ impl<'a> FuncBuild<'a> {
             return Val::Nil;
         }
 
-        let a1 = self.check_drop(&v1);
+        self.check_drop(&v1);
 
-        self.insts.push(f(a1, v1));
+        self.insts.push(f(v1));
         Val::Stack(self.push_any(), true)
     }
     fn gen_binop(
         &mut self,
         l: Expr,
         r: Expr,
-        f: impl Fn(bool, bool, Val, Val) -> Inst,
+        f: impl Fn(Val, Val) -> Inst,
         do_compute: bool,
     ) -> Val {
-        let (v1, v2) = (
+        let (mut v1, mut v2) = (
             self.translate(l, do_compute, false),
             self.translate(r, do_compute, false),
         );
@@ -371,14 +398,14 @@ impl<'a> FuncBuild<'a> {
             return Val::Nil;
         }
 
-        let (a1, a2) = self.check_drop2(&v1, &v2);
+        self.check_drops([&mut v1, &mut v2]);
 
-        self.insts.push(f(a1, a2, v1, v2));
+        self.insts.push(f(v1, v2));
         Val::Stack(self.push_any(), true)
     }
     fn gen_copy(&mut self, v1: Val) -> Val {
-        let a1 = self.check_drop(&v1);
-        self.insts.push(Inst::Copy(a1, v1));
+        self.check_drop(&v1);
+        self.insts.push(Inst::Copy(false, v1));
         Val::Stack(self.push_any(), false)
     }
 
@@ -420,18 +447,25 @@ impl<'a> FuncBuild<'a> {
                 Val::Nil
             }
             Expr::Call(func, args) => {
-                // get the function
-                let v1 = self.translate(*func, true, false);
-                let a1 = self.check_drop(&v1);
                 // yield all args to stack
+                let n_args = args.len();
                 for arg in args {
                     self.translate(arg, true, true);
                 }
+                // pop all of them
+                self.local.pop_top_n(n_args);
+
+                // get the function
+                let v1 = self.translate(*func, true, false);
+                self.check_drop(&v1);
+
                 // decide if we push result to stack
                 // if we are computing a value or yielding one, then yes
                 let push = do_compute || do_yield;
+
                 // add call
-                self.insts.push(Inst::Call(push, a1, v1));
+                self.insts.push(Inst::Call(push, n_args as u8, v1));
+
                 // whatever we output
                 if push {
                     Val::Stack(self.push_any(), true)
@@ -455,7 +489,9 @@ impl<'a> FuncBuild<'a> {
 
             /* vars */
             Expr::Literal(Literal::Ident(id, Some(rs))) if do_compute => {
-                Val::Stack(self.find(&id).unwrap(), rs.now == rs.meta.total.get())
+                let is_last_use = rs.now == rs.meta.total.get();
+                let is_shared = rs.meta.is_shared.get();
+                Val::Stack(self.find(&id).unwrap(), is_last_use && !is_shared)
             }
             Expr::Literal(Literal::Ident(_, _)) => Val::Nil,
             Expr::Assign(l, r) => {
@@ -469,8 +505,7 @@ impl<'a> FuncBuild<'a> {
                 // if this isn't getting used for computation OR referenced,
                 // just continue translation without adding to stack
                 if !(do_compute || gets_referenced) {
-                    // do_compute doesn't matter for literals
-                    self.translate(*r, true, false)
+                    self.translate(*r, false, false)
                 } else {
                     // get val
                     let val = match *r {
@@ -500,16 +535,29 @@ impl<'a> FuncBuild<'a> {
                     if let Some(sv) = self.find(&id) {
                         // yes, move it there
                         self.insts.push(Inst::Move(sv.clone(), val));
+                        self.local.pop_top();
+                        // find out if it should be popped
+                        let is_shared = matches!(sv, Stkval::Shared(_, _));
+                        let should_pop = gets_referenced && !is_shared;
                         // return new stackval
-                        Val::Stack(sv, gets_referenced)
-                    } else {
-                        // no it doesn't
-                        if matches!(val, Val::Stack(_, _)) {
-                            // it is a stackval so keep track of it
-                            self.local.swap_top(FSValue::Var(id));
+                        return Val::Stack(sv, should_pop);
+                    } else if matches!(val, Val::Stack(_, _)) {
+                        // no, keep track of new stackval
+                        self.local.swap_top(FSValue::Var(id));
+
+                        // also move to shared if we're supposed to do that :)
+                        if ref_stat.meta.is_shared.get()
+                            && let Val::Stack(sv, _) = val
+                        {
+                            // move fs value
+                            let v = self.local.pop_top();
+                            self.shared.push(v);
+                            // copy to shared w pop
+                            self.insts.push(Inst::Copy(true, Val::Stack(sv, true)));
+                            return Val::Stack(self.top_shared(), false);
                         }
-                        val
                     }
+                    val
                 }
             }
 

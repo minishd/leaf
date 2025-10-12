@@ -26,6 +26,13 @@ where
     fn swap_top(&mut self, new: Self::Value) {
         *self.values_mut().last_mut().unwrap() = new;
     }
+    fn pop_top(&mut self) -> Self::Value {
+        self.values_mut().pop().unwrap()
+    }
+    fn pop_top_n(&mut self, n: usize) -> Vec<Self::Value> {
+        let start = self.values().len() - n;
+        self.values_mut().split_off(start)
+    }
 
     fn find(&self, input: &Self::Input) -> Option<(Self::Output, u16)> {
         let mut cur = Some(self);

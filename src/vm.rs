@@ -46,8 +46,6 @@ impl<'a> FuncVm<'a> {
         while pc < insts.len() {
             let inst = &insts[pc];
 
-            // println!("{}> {:?} {inst:?}", "=".repeat(self.depth), self.locals);
-
             match inst {
                 /* rhs */
                 Not(a) | Return(a) => {

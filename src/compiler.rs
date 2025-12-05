@@ -473,6 +473,7 @@ impl<'a> FuncBuild<'a> {
                     Val::Nil
                 }
             }
+            Expr::If(cond, true_case, false_case) => todo!(),
 
             /* captured literal */
             Expr::Literal(lit) if do_yield => {
@@ -629,8 +630,6 @@ impl<'a> FuncBuild<'a> {
             Expr::LessThanOrEqualTo(l, r) => {
                 self.translate(Expr::GreaterThanOrEqualTo(r, l), do_compute, false)
             }
-
-            e => unimplemented!("{e:?}"),
         }
     }
 }

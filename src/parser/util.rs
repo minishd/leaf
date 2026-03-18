@@ -47,8 +47,8 @@ fn fmt_expr(e: &Expr, depth: usize) -> String {
         Expr::Return(l) => format!("return ({})", fmt_expr(l, depth)),
         Expr::Block(b) => {
             let mut result = String::new();
-            let len = b.exprs.len();
-            for (i, expr) in b.exprs.iter().enumerate() {
+            let len = b.len();
+            for (i, expr) in b.iter().enumerate() {
                 result.push_str(&"  ".repeat(depth));
                 result.push_str(&fmt_expr(expr, depth + 1));
                 if depth != 0 || i + 1 != len {
@@ -60,20 +60,12 @@ fn fmt_expr(e: &Expr, depth: usize) -> String {
             }
             result
         }
-        Expr::Func(a, e, func_stat) => format!(
-            "(func({}){} ({}))",
+        Expr::Func(a, e) => format!(
+            "(func({}) ({}))",
             a.iter()
                 .map(|e| fmt_expr(e, depth))
                 .collect::<Vec<_>>()
                 .join(", "),
-            func_stat
-                .as_ref()
-                .map(|fm| fm
-                    .is_unreturnable
-                    .get()
-                    .then_some("@UNRET")
-                    .unwrap_or("@OK"))
-                .unwrap_or_default(),
             fmt_expr(e, depth)
         ),
         Expr::Negate(l) => format!("(-{})", fmt_expr(l, depth)),

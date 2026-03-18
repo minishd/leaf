@@ -4,7 +4,7 @@ use std::{
     num::{ParseFloatError, ParseIntError},
 };
 
-use crate::{compiler::RefStat, kinds};
+use crate::kinds;
 
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub struct Ident(String);
@@ -21,7 +21,7 @@ pub enum Literal {
     Float(f64),
     Boolean(bool),
     Nil,
-    Ident(Ident, Option<RefStat>),
+    Ident(Ident),
 }
 impl fmt::Display for Literal {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -30,19 +30,7 @@ impl fmt::Display for Literal {
             Literal::Integer(n) => write!(f, "{n}"),
             Literal::Float(n) => write!(f, "{n}"),
             Literal::Boolean(b) => write!(f, "{b}"),
-            Literal::Ident(id, ref_stat) => write!(
-                f,
-                "{id}{}",
-                ref_stat
-                    .as_ref()
-                    .map(|rs| format!(
-                        "@{}{}/{}",
-                        rs.meta.is_shared.get().then_some("sh+").unwrap_or(""),
-                        rs.now,
-                        rs.meta.total.get()
-                    ))
-                    .unwrap_or_default()
-            ),
+            Literal::Ident(id) => write!(f, "{id}"),
             Literal::Nil => write!(f, "nil"),
         }
     }
@@ -86,6 +74,7 @@ kinds!(
 #[derive(PartialEq, Eq, PartialOrd, Ord, Clone, Copy)]
 pub enum Precedence {
     Min,
+    Return,
     Assign,
     WithAssign,
     Logical,
@@ -104,9 +93,8 @@ pub enum Associativity {
 impl Token {
     pub fn prefix_precedence(&self) -> Option<Precedence> {
         Some(match self {
-            Token::Return | Token::If | Token::Func | Token::Minus | Token::Not => {
-                Precedence::Prefix
-            }
+            Token::Return => Precedence::Return,
+            Token::If | Token::Func | Token::Minus | Token::Not => Precedence::Prefix,
             _ => return None,
         })
     }
@@ -162,18 +150,14 @@ impl From<ParseFloatError> for LexError {
     }
 }
 
-pub type Result<T> = std::result::Result<T, LexError>;
+type Result<T> = std::result::Result<T, LexError>;
 
 pub struct Lexer<I>
 where
     I: Iterator<Item = char>,
 {
     chars: Peekable<I>,
-}
-
-#[allow(clippy::unnecessary_wraps)]
-fn t(tk: Token) -> Option<Result<Token>> {
-    Some(Ok(tk))
+    offset: usize,
 }
 
 impl<I> Lexer<I>
@@ -181,8 +165,10 @@ where
     I: Iterator<Item = char>,
 {
     pub fn new(chars: I) -> Self {
-        let chars = chars.peekable();
-        Self { chars }
+        Self {
+            chars: chars.peekable(),
+            offset: 0,
+        }
     }
 
     fn peek(&mut self) -> Option<char> {
@@ -190,7 +176,7 @@ where
     }
 
     fn next(&mut self) -> Option<char> {
-        self.chars.next()
+        self.chars.next().inspect(|_| self.offset += 1)
     }
     fn next_unwrap(&mut self) -> char {
         match self.next() {
@@ -243,16 +229,17 @@ where
             "true" => Token::Literal(Literal::Boolean(true)),
             "false" => Token::Literal(Literal::Boolean(false)),
             "nil" => Token::Literal(Literal::Nil),
-            _ => Token::Literal(Literal::Ident(Ident(word), Option::default())),
+            _ => Token::Literal(Literal::Ident(Ident(word))),
         }
     }
 
-    fn lex_number(&mut self) -> Result<Token> {
+    fn lex_number(&mut self, is_neg: bool) -> Result<Token> {
         let mut n_str = String::new();
 
-        // we don't lex negatives. the impl for that is
-        // a negation of a positive number at runtime.
-        // maybe that's kind of stupid though, lol
+        if is_neg {
+            n_str.push('-');
+        }
+
         let mut is_float = false;
         while let Some('0'..='9' | '.') = self.peek() {
             if self.peek() == Some('.') {
@@ -296,6 +283,11 @@ where
     }
 
     fn lex(&mut self) -> Option<Result<Token>> {
+        #[allow(clippy::unnecessary_wraps)]
+        fn t(tk: Token) -> Option<Result<Token>> {
+            Some(Ok(tk))
+        }
+
         loop {
             break match self.lex_whitespace()? {
                 // { and } start/end of code block
@@ -315,8 +307,10 @@ where
 
                 // - subtract
                 // or -= sub eq
+                // or 0-9 number
                 '-' => match self.eat_peek() {
                     Some('=') => self.eat_to(Token::MinusEquals),
+                    Some('0'..='9' | '.') => Some(self.lex_number(true)),
                     _ => t(Token::Minus),
                 },
 
@@ -389,7 +383,7 @@ where
                 'a'..='z' | 'A'..='Z' | '_' => Some(Ok(self.lex_word())),
 
                 // 0-9 integer
-                '0'..='9' | '.' => Some(self.lex_number()),
+                '0'..='9' | '.' => Some(self.lex_number(false)),
 
                 // " strings
                 '"' => Some(self.lex_string()),

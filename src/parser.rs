@@ -1,7 +1,6 @@
 use std::{fmt, iter::Peekable};
 
 use crate::{
-    compiler::FuncStat,
     kind::Kind,
     lexer::{Associativity, LexError, Literal, Precedence, Token, TokenKind},
 };
@@ -14,8 +13,8 @@ pub enum Expr {
     Assign(Box<Expr>, Box<Expr>),
     Literal(Literal),
     // Non-literal datatypes
-    Block(Block),
-    Func(Vec<Expr>, Box<Expr>, Option<FuncStat>),
+    Block(Vec<Expr>),
+    Func(Vec<Expr>, Box<Expr>),
     // Control flow
     If(Box<Expr>, Box<Expr>, Option<Box<Expr>>),
     Return(Box<Expr>),
@@ -45,11 +44,6 @@ pub enum Expr {
     SubtractAssign(Box<Expr>, Box<Expr>),
     MultiplyAssign(Box<Expr>, Box<Expr>),
     DivideAssign(Box<Expr>, Box<Expr>),
-}
-
-#[derive(Debug, Default, Clone)]
-pub struct Block {
-    pub exprs: Vec<Expr>,
 }
 
 #[derive(Debug)]
@@ -101,6 +95,15 @@ where
         self.tokens.next().ok_or(ParseError::UnexpectedEnd)
     }
 
+    fn expect_peek(&mut self, kind: TokenKind) -> Result<()> {
+        let t = self.try_peek()?;
+
+        if t.kind() != kind {
+            return Err(ParseError::UnexpectedToken(self.next_unwrap()));
+        }
+
+        Ok(())
+    }
     fn expect_next(&mut self, kind: TokenKind) -> Result<()> {
         let t = self.try_next()?;
 
@@ -110,6 +113,7 @@ where
 
         Ok(())
     }
+
     fn is_next(&mut self, kind: Option<TokenKind>) -> bool {
         match self.try_peek() {
             Ok(t) if Some(t.kind()) == kind => true,
@@ -138,7 +142,7 @@ where
                 let exprs = self.parse_until(Some(TokenKind::CurlyClose))?;
                 // skip curly brace
                 self.eat();
-                Box::new(Expr::Block(Block { exprs }))
+                Box::new(Expr::Block(exprs))
             }
 
             // unary ops!! (prefix)
@@ -155,7 +159,7 @@ where
                         // parse body
                         let body = self.parse_expr(prec, in_group)?;
                         // pack
-                        Box::new(Expr::Func(args, body, None))
+                        Box::new(Expr::Func(args, body))
                     }
                     // parse if
                     Token::If => {
@@ -193,6 +197,7 @@ where
         };
 
         loop {
+            // look for op, end, or special
             let op = match self.try_peek() {
                 // end (group)
                 Ok(Token::ParenClose) if in_group => break,
@@ -223,6 +228,7 @@ where
                 Ok(_) => break,
             };
 
+            // get op precedence
             let (prec, assoc) = op.infix_precedence().unwrap();
 
             // break if this op is meant for previous recursion
@@ -296,10 +302,9 @@ where
         let mut exprs = Vec::new();
 
         while !self.is_next(until) {
-            // skip delimiter
-            if self.is_next(Some(delim)) {
+            // skip delimiter (if it's not the first iteration)
+            if !exprs.is_empty() && self.is_next(Some(delim)) {
                 self.eat();
-                continue;
             }
 
             // try to parse expr
@@ -311,13 +316,12 @@ where
             }
 
             // check for delim
-            self.expect_next(delim)?;
+            self.expect_peek(delim)?;
         }
         Ok(exprs)
     }
 
-    pub fn parse(&mut self) -> Result<Block> {
-        let exprs = self.parse_until(None)?;
-        Ok(Block { exprs })
+    pub fn parse(&mut self) -> Result<Expr> {
+        Ok(Expr::Block(self.parse_until(None)?))
     }
 }
